@@ -1,0 +1,53 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --frozen
+
+      - name: Unit tests
+        run: uv run pytest -q
+
+      - name: dbt packages
+        working-directory: transform
+        run: uv run dbt deps --profiles-dir .
+
+      # Builds the whole warehouse from scratch against DuckDB with no network
+      # dependency, so model SQL, data tests and unit tests are all verified on
+      # every push without touching BigQuery or spending a single API call.
+      - name: dbt build (DuckDB, empty warehouse)
+        working-directory: transform
+        env:
+          DBT_TARGET: dev
+        run: |
+          uv run python ../scripts/init_warehouse.py --with-items
+          uv run dbt build --profiles-dir . --target dev
+
+  feeds:
+    # Informational only: feed URLs rot on the vendors' schedule, not ours, so a dead
+    # source must not turn the repo red. Read the summary, do not gate merges on it.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --frozen
+      - name: Validate feeds
+        run: uv run python scripts/validate_feeds.py

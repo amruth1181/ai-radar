@@ -1,0 +1,63 @@
+name: daily-digest
+
+on:
+  schedule:
+    # 05:00 UTC. Actions cron is UTC only and does NOT follow daylight saving, so this
+    # is 07:00 Paris in summer and 06:00 in winter. It is also not punctual --
+    # scheduled runs routinely fire 5-20 minutes late. Both are fine for a digest, and
+    # the 26-hour window means a skipped run self-heals the next day.
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+
+# Never let two runs overlap: they would both ingest and both deliver.
+concurrency:
+  group: daily-digest
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --frozen
+
+      - name: Write GCP credentials
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: |
+          # The runner is destroyed after the job, so this file dies with it.
+          printf '%s' "$GCP_SA_KEY" > "${RUNNER_TEMP}/gcp-sa.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=${RUNNER_TEMP}/gcp-sa.json" >> "$GITHUB_ENV"
+
+      - name: Install dbt packages
+        working-directory: transform
+        run: uv run dbt deps --profiles-dir .
+
+      - name: Run pipeline
+        env:
+          DBT_TARGET: prod
+          BIGQUERY_METHOD: service-account
+          BIGQUERY_PROJECT: ${{ secrets.BIGQUERY_PROJECT }}
+          BIGQUERY_LOCATION: US
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          ENRICH_BACKEND: glm
+          GLM_MODEL: glm-4.5-flash
+          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
+          # Raises the GitHub search rate limit from 10 to 30 requests/minute.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: uv run python scripts/run_daily.py
+
+      - name: Alert on failure
+        if: failure()
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          uv run python -m deliver.discord --alert \
+            "Daily digest run failed — ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
