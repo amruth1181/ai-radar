@@ -32,3 +32,23 @@ models:
           - accepted_values:
               arguments:
                 values: [model_release, research, tooling, industry, policy, tutorial, other]
+
+  - name: fct_daily_digest
+    description: >
+      The items that will be delivered today. At most `digest_size` rows, all above
+      `digest_min_score`, none of them previously sent.
+    columns:
+      - name: url_hash
+        data_tests:
+          - unique
+          - not_null
+      - name: relevance_score
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 5
+                max_value: 10
+                inclusive: true
+      - name: final_score
+        data_tests: [not_null]

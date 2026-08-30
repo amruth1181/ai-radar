@@ -10,4 +10,8 @@ sources:
       - name: items
         description: One row per item per source sighting. Duplicates are expected here.
       - name: enrichments
-        description: LLM triage output, keyed on url_hash. Empty until Phase 3.
+        description: LLM triage output, keyed on url_hash. Written by enrich/run.py.
+      - name: sent_items
+        description: >
+          Delivery ledger. Without it the 26-hour window resends yesterday's top
+          item, which is the fastest way to stop trusting the digest.

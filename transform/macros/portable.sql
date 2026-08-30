@@ -22,3 +22,12 @@
         timestamp('1970-01-01 00:00:00+00')
     {%- endif -%}
 {% endmacro %}
+
+
+{% macro hours_ago(n) %}
+    {%- if target.type == 'duckdb' -%}
+        (now() - interval {{ n }} hour)
+    {%- else -%}
+        timestamp_sub(current_timestamp(), interval {{ n }} hour)
+    {%- endif -%}
+{% endmacro %}
