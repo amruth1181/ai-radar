@@ -1,0 +1,83 @@
+# Feed definitions. Adding a source is one entry here, not new code.
+#
+# `weight` multiplies the LLM relevance score. High-signal, low-volume sources
+# (a lab's release blog) should outrank high-volume, noisy ones (aggregators).
+#
+# Every URL here was validated live on 2026-08-30. Feed URLs rot — re-run
+# scripts/validate_feeds.py weekly and treat a 7-day silence as an alert.
+#
+# NOTE: arXiv declares <skipDays>Saturday,Sunday</skipDays> and serves an empty
+# channel all weekend. An empty arXiv feed on a weekend is expected, not a failure.
+
+sources:
+  # --- Papers -------------------------------------------------------------
+  - name: arxiv_cs_cl
+    type: rss
+    url: https://rss.arxiv.org/rss/cs.CL
+    weight: 1.0
+    category_hint: research
+
+  - name: arxiv_cs_lg
+    type: rss
+    url: https://rss.arxiv.org/rss/cs.LG
+    weight: 0.9
+    category_hint: research
+
+  - name: arxiv_cs_ai
+    type: rss
+    url: https://rss.arxiv.org/rss/cs.AI
+    weight: 0.9
+    category_hint: research
+
+  # --- Lab / vendor announcements (highest signal) ------------------------
+  # No anthropic_news: anthropic.com serves no public RSS feed (all candidate
+  # paths 404 as of 2026-08-30). Their launches reach us via HN + simon_willison.
+  - name: openai_news
+    type: rss
+    url: https://openai.com/news/rss.xml
+    weight: 1.5
+    category_hint: model_release
+
+  - name: deepmind_blog
+    type: rss
+    url: https://deepmind.google/blog/rss.xml
+    weight: 1.4
+    category_hint: model_release
+
+  - name: google_research
+    type: rss
+    url: https://research.google/blog/rss/
+    weight: 1.2
+    category_hint: research
+
+  - name: google_ai_blog
+    type: rss
+    url: https://blog.google/technology/ai/rss/
+    weight: 1.2
+    category_hint: industry
+
+  - name: huggingface_blog
+    type: rss
+    url: https://huggingface.co/blog/feed.xml
+    weight: 1.2
+    category_hint: tooling
+
+  # --- Practitioner writing -----------------------------------------------
+  - name: simon_willison
+    type: rss
+    url: https://simonwillison.net/atom/everything/
+    weight: 1.3
+    category_hint: tooling
+
+  - name: sebastian_raschka
+    type: rss
+    url: https://magazine.sebastianraschka.com/feed
+    weight: 1.3
+    category_hint: research
+
+  # --- Aggregators (noisy, low weight, high volume) -----------------------
+  - name: lobsters_ai
+    type: rss
+    url: https://lobste.rs/t/ai.rss
+    weight: 0.8
+    category_hint: tooling
