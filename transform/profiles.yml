@@ -1,5 +1,6 @@
-# Dev writes to the local DuckDB file that dlt also loads into; prod will point at
-# BigQuery in Phase 4. Path is relative to transform/, which is where dbt runs.
+# Dev writes to the local DuckDB file that dlt also loads into.
+# Prod is BigQuery, because the GitHub Actions runner is destroyed after every run --
+# anything on its disk is gone, so the warehouse has to live outside it.
 ai_radar:
   target: "{{ env_var('DBT_TARGET', 'dev') }}"
   outputs:
@@ -8,3 +9,16 @@ ai_radar:
       path: "{{ env_var('DUCKDB_PATH', '../ai_radar.duckdb') }}"
       schema: analytics
       threads: 4
+
+    prod:
+      type: bigquery
+      # keyfile in CI (the GCP_SA_KEY secret is written to disk by the workflow);
+      # falls back to application-default credentials for local prod runs.
+      method: "{{ env_var('BIGQUERY_METHOD', 'oauth') }}"
+      keyfile: "{{ env_var('GOOGLE_APPLICATION_CREDENTIALS', '') }}"
+      project: "{{ env_var('BIGQUERY_PROJECT') }}"
+      dataset: ai_radar_marts
+      location: "{{ env_var('BIGQUERY_LOCATION', 'US') }}"
+      threads: 4
+      priority: interactive
+      job_retries: 2

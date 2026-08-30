@@ -5,7 +5,8 @@ sources:
     description: >
       Append-only landing zone. dlt owns `items`; the enrichment step owns
       `enrichments`. Nothing here is ever cleaned in place.
-    schema: raw
+    # DuckDB uses a `raw` schema in one file; BigQuery uses a separate dataset.
+    schema: "{{ 'raw' if target.type == 'duckdb' else 'ai_radar_raw' }}"
     tables:
       - name: items
         description: One row per item per source sighting. Duplicates are expected here.
