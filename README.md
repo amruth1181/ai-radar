@@ -114,7 +114,7 @@ Where duplicates die. This is the real work of the project.
 | `stg_items` | Normalises timestamps, trims titles, guards against future dates and epoch-0 parse bugs. |
 | `int_items_dedup` | One row per canonical URL. Keeps the earliest sighting but the maximum engagement, so a paper that hits arXiv then Hacker News gets the arXiv timestamp and the HN points. |
 | `fct_items` | Joins enrichment and computes `final_score`. Materialized as a table, not incremental: the decay term changes every row's score on every run. |
-| `fct_daily_digest` | Today's top N, one row per item, filtered by threshold and excluded against the sent-items ledger. |
+| `fct_daily_digest` | Today's top N, threshold-filtered, ledger-excluded, and capped per source and category so one busy topic cannot take the whole digest. |
 | `macros/portable.sql` | `json_get` and `epoch_start`, which differ between DuckDB and BigQuery. Isolating them here keeps the models readable and the prod switch cheap. |
 | `scripts/init_warehouse.py` | Creates the tables Python owns — `raw.enrichments` and `raw.sent_items` — which dbt reads but does not build. |
 | `models/intermediate/_unit_tests.yml` | dbt unit tests that run the dedupe against fabricated collisions. |
@@ -263,6 +263,20 @@ reading the digest in month three.
 ## Ranking
 
 `final_score` combines four factors:
+
+Pure top-N by score does not produce a digest — it produces whatever the loudest corner
+of the internet did yesterday. A real run returned **9 of 12 items about one model
+release, all from one subreddit**: individually well-scored, collectively useless,
+because reading item 9 taught you nothing item 1 had not.
+
+So the top-N cut is preceded by two caps, applied in order: at most
+`digest_max_per_source` (3) items from any one source, then at most
+`digest_max_per_category` (4) from any one category. Source first, because
+near-duplicate posts about one hot topic overwhelmingly arrive through a single source.
+
+The order matters and was a bug once: ranking both at the same time let an item the
+source cap was about to discard still consume a category slot, which pushed out the only
+GitHub item of the day.
 
 | Factor | Range | Purpose |
 |---|---|---|
