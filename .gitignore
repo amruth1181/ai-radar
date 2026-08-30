@@ -216,3 +216,22 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- ai-radar ---
+# Local warehouse — rebuildable from scratch, never committed
+*.duckdb
+*.duckdb.wal
+
+# Credentials
+.dlt/secrets.toml
+*-sa.json
+service-account*.json
+gcp-*.json
+
+# dbt
+transform/target/
+transform/logs/
+transform/dbt_packages/
+
+# Generated static site output
+site/
