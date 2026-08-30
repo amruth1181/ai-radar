@@ -146,7 +146,7 @@ profile so you read ten. The summary is a side effect.
 |---|---|
 | `config/profile.yaml` | Your interests, written honestly. Goes into the prompt verbatim and drives every score. |
 | `enrich/backends/base.py` | The `EnrichmentBackend` interface both providers implement. |
-| `enrich/backends/glm.py` | GLM via its Anthropic-compatible endpoint. Free, bounded concurrency. |
+| `enrich/backends/glm.py` | GLM via its Anthropic-compatible endpoint. Free tier, bounded concurrency. |
 | `enrich/backends/claude.py` | Claude Haiku 4.5 via the Batch API — 50% off, results keyed by `custom_id`. |
 | `enrich/prompts.py` | The triage prompt and its JSON contract. |
 | `enrich/run.py` | Selects unenriched items in the window, enriches, writes back to `raw.enrichments`. |
@@ -161,6 +161,21 @@ usually find your profile was vague, not that the model misjudged.
 Enrichment writes to a separate table joined on `url_hash`, so prompts can be rewritten and
 re-run without touching raw data. It runs *after* dedupe, so you never pay three times to
 score the same paper that appeared on arXiv, HN and Reddit.
+
+**Why the provider is swappable.** The choice depends on data you do not have on day one:
+how often a backend returns malformed JSON, and whether its scores match your judgement.
+`EnrichmentResult.failure_rate` is reported on every run. Under ~5% is fine; over ~10% and
+`ENRICH_BACKEND=claude` costs about $1.20 a month, which is worth more than a weekend
+debugging a flaky free tier.
+
+GLM is the default for one specific reason: z.ai exposes an **Anthropic-compatible
+endpoint**, so both backends share the same `anthropic` SDK and there are no extra
+dependencies. Gemini or Groq would each mean another SDK and another response shape.
+
+**Nothing raises for a single bad item.** A model that returns prose, markdown fences, or
+a score of 99 degrades to a skipped item — never a crashed run, and never a row that
+fails a dbt test downstream. Out-of-range scores are clamped rather than rejected, because
+an 11 would fail `accepted_range` and take the whole build with it.
 
 ---
 
