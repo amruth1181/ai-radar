@@ -147,41 +147,81 @@ def build_embed(
     }
 
 
-def _sample() -> tuple[str, list[dict]]:
-    """Phase 0 walking skeleton: 5 most recent items straight out of DuckDB."""
-    import duckdb
+CATEGORY_LABELS = {
+    "model_release": "MODEL RELEASE",
+    "research": "RESEARCH",
+    "tooling": "TOOLING",
+    "industry": "INDUSTRY",
+    "policy": "POLICY",
+    "tutorial": "TUTORIAL",
+    "other": "OTHER",
+}
 
-    rows = duckdb.connect("ai_radar.duckdb", read_only=True).execute(
-        """
-        select title, url, summary_raw, source_name
-        from raw.items
-        order by published_at desc
-        limit 5
-        """
-    ).fetchall()
 
-    embeds = [
-        build_embed(
-            title=title,
-            url=url,
-            description=(summary or "")[:300],
-            footer=source,
-        )
-        for title, url, summary, source in rows
-    ]
-    return "🛰 **AI Radar** — walking skeleton", embeds
+def _item_footer(item) -> str:
+    """Provenance line: where it came from, how it scored, why it might matter."""
+    parts = [item.seen_in or item.source_name, f"{item.final_score:.1f}"]
+    if item.max_points:
+        parts.append(f"{item.max_points}pts")
+    if item.corroborated:
+        parts.append(f"{item.corroboration}x corroborated")
+    return " · ".join(parts)
+
+
+def render(digest) -> tuple[str, list[dict]]:
+    """Turn a Digest into a Discord header plus one embed per item."""
+    date = digest.built_at.strftime("%a %d %b")
+    header = f"🛰 **AI Radar** — {date}"
+
+    if digest.is_quiet:
+        # Silence is indistinguishable from a crashed job. A quiet day is
+        # information; no message at all is anxiety.
+        header += f"\n_Quiet day — {len(digest.items)} item(s) cleared the threshold._"
+
+    embeds = []
+    for category, items in digest.by_category().items():
+        for index, item in enumerate(items):
+            title = item.title
+            # Label only the first item in each group, so the message reads as
+            # sections without repeating the header on every row.
+            if index == 0:
+                title = f"[{CATEGORY_LABELS.get(category, category.upper())}] {title}"
+            description = item.summary
+            if item.discussion_url and item.discussion_url != item.url:
+                description += f"\n\n{link('discussion', item.discussion_url)}"
+            embeds.append(
+                build_embed(
+                    title=title,
+                    url=item.url,
+                    description=description,
+                    footer=_item_footer(item),
+                    category=category,
+                )
+            )
+
+    return f"{header}\n\n—\n{escape_md(digest.footer())}", embeds
+
+
+def send_digest(digest, username: str = "AI Radar") -> bool:
+    content, embeds = render(digest)
+    if not embeds:
+        return send(f"{content}\n\n_Nothing cleared the threshold today._",
+                    username=username)
+    return send_embeds(embeds, content=content, username=username)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Send a Discord message.")
+    parser = argparse.ArgumentParser(description="Send the daily digest to Discord.")
     parser.add_argument("--alert", help="send this text as a plain alert")
     args = parser.parse_args()
 
     if args.alert:
         send(f"⚠️ {args.alert}")
-    else:
-        content, embeds = _sample()
-        send_embeds(embeds, content=content)
+        return
+
+    from deliver.digest import build_digest
+
+    send_digest(build_digest())
 
 
 if __name__ == "__main__":
