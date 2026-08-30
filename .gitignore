@@ -235,3 +235,4 @@ transform/dbt_packages/
 
 # Generated static site output
 site/
+transform/.user.yml

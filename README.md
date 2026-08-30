@@ -113,12 +113,27 @@ Where duplicates die. This is the real work of the project.
 |---|---|
 | `stg_items` | Normalises timestamps, trims titles, guards against future dates and epoch-0 parse bugs. |
 | `int_items_dedup` | One row per canonical URL. Keeps the earliest sighting but the maximum engagement, so a paper that hits arXiv then Hacker News gets the arXiv timestamp and the HN points. |
-| `fct_items` | Joins enrichment and computes `final_score`. |
+| `fct_items` | Joins enrichment and computes `final_score`. Materialized as a table, not incremental: the decay term changes every row's score on every run. |
 | `fct_daily_digest` | Today's top N, one row per item, filtered by threshold and excluded against the sent-items ledger. |
+| `macros/portable.sql` | `json_get` and `epoch_start`, which differ between DuckDB and BigQuery. Isolating them here keeps the models readable and the prod switch cheap. |
+| `scripts/init_warehouse.py` | Creates the tables Python owns — `raw.enrichments` and `raw.sent_items` — which dbt reads but does not build. |
+| `models/intermediate/_unit_tests.yml` | dbt unit tests that run the dedupe against fabricated collisions. |
 
-The `unique` test on `int_items_dedup.url_hash` is the duplicate alarm. It will fail the
-first time. Fix `canonicalize()` until it passes — never loosen the test. Every duplicate
-that escapes later becomes a new case in `tests/test_normalize.py`.
+The `unique` test on `int_items_dedup.url_hash` is the duplicate alarm. Fix
+`canonicalize()` until it passes — never loosen the test. Every duplicate that escapes
+later becomes a new case in `tests/test_normalize.py`.
+
+**But `unique` alone is not enough.** On a warehouse that happens to contain no
+cross-source duplicates it passes without exercising one line of the merge logic — which
+was exactly the state this project was in when the model was written. The unit tests
+supply the collisions instead: one item seen by three sources must collapse to a single
+row carrying the earliest timestamp, the maximum engagement, and the highest-weighted
+source's metadata.
+
+The incremental key is `fetched_at`, not `published_at`. Filtering on `published_at`
+would miss late corroboration — a paper published two days ago that reaches Hacker News
+today has an unchanged `published_at`, so it would fall outside the window and never pick
+up the points or the higher source count.
 
 ---
 
@@ -281,8 +296,17 @@ ai-radar/
 ```bash
 uv sync                              # install dependencies
 uv run pytest                        # run the test suite
-uv run python -m ingest.pipeline     # fetch feeds into ai_radar.duckdb
-uv run python -m deliver.discord     # render a message (prints if no webhook set)
+uv run python scripts/init_warehouse.py   # create Python-owned tables (idempotent)
+uv run python -m ingest.pipeline          # fetch feeds into ai_radar.duckdb
+uv run python -m deliver.discord          # render a message (prints if no webhook set)
+```
+
+Transformations run from the `transform/` directory:
+
+```bash
+cd transform
+uv run dbt deps  --profiles-dir .    # once, installs dbt_utils
+uv run dbt build --profiles-dir .    # models + data tests + unit tests
 ```
 
 Inspect what landed:
