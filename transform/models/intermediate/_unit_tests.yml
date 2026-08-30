@@ -1,0 +1,139 @@
+version: 2
+
+# The `unique` data test on url_hash only proves the model didn't emit duplicates.
+# On a warehouse that happens to contain no cross-source duplicates it passes without
+# exercising a single line of the merge logic — which is exactly the state this project
+# was in when the model was written.
+#
+# These unit tests run the model against fabricated input, so the merge semantics are
+# verified whether or not today's ingestion happened to produce a collision.
+#
+# is_incremental is forced false: unit tests build the model standalone, with no
+# existing table for the incremental branch to read.
+
+unit_tests:
+
+  - name: collapses_one_item_seen_by_three_sources
+    description: >
+      The scenario the whole project exists for: a paper hits arXiv, then Hacker News,
+      then Reddit. Expect one row carrying arXiv's timestamp (earliest), HN's points
+      (maximum), and the metadata of the highest-weighted source.
+    model: int_items_dedup
+    overrides:
+      macros:
+        is_incremental: false
+    given:
+      - input: ref('stg_items')
+        rows:
+          # arXiv: earliest sighting, highest weight -> supplies title and url
+          - url_hash: "abc123"
+            source_name: "arxiv_cs_cl"
+            source_type: "rss"
+            source_weight: 1.0
+            url: "https://arxiv.org/abs/2401.11111"
+            discussion_url: null
+            title: "Canonical Title From arXiv"
+            author: "Researcher"
+            summary_raw: "The abstract."
+            published_at: "2026-08-28 09:00:00+00"
+            fetched_at: "2026-08-30 05:00:00+00"
+            engagement: null
+          # Hacker News: later, lower weight, but carries the engagement signal
+          - url_hash: "abc123"
+            source_name: "hn_ai"
+            source_type: "hackernews"
+            source_weight: 0.7
+            url: "https://arxiv.org/abs/2401.11111"
+            discussion_url: "https://news.ycombinator.com/item?id=1"
+            title: "Rehosted HN Title"
+            author: "poster"
+            summary_raw: ""
+            published_at: "2026-08-29 12:00:00+00"
+            fetched_at: "2026-08-30 05:00:00+00"
+            engagement: '{"points": 340, "comments": 88}'
+          # Reddit: third independent sighting, lower engagement than HN
+          - url_hash: "abc123"
+            source_name: "reddit_localllama"
+            source_type: "rss"
+            source_weight: 0.6
+            url: "https://arxiv.org/abs/2401.11111"
+            discussion_url: null
+            title: "Reddit Thread Title"
+            author: "u/someone"
+            summary_raw: ""
+            published_at: "2026-08-29 18:00:00+00"
+            fetched_at: "2026-08-30 05:00:00+00"
+            engagement: '{"points": 12, "comments": 3}'
+    expect:
+      rows:
+        - url_hash: "abc123"
+          source_name: "arxiv_cs_cl"
+          source_type: "rss"
+          source_weight: 1.0
+          url: "https://arxiv.org/abs/2401.11111"
+          discussion_url: null
+          title: "Canonical Title From arXiv"
+          author: "Researcher"
+          summary_raw: "The abstract."
+          published_at: "2026-08-28 09:00:00+00"
+          last_fetched_at: "2026-08-30 05:00:00+00"
+          source_count: 3
+          seen_in: "arxiv_cs_cl,hn_ai,reddit_localllama"
+          max_points: 340
+          max_comments: 88
+          max_stars: null
+          corroboration: 3
+
+  - name: corroboration_caps_at_three
+    description: >
+      A fourth and fifth sighting add far less evidence than the second, so the boost
+      is capped. source_count keeps counting; corroboration does not.
+    model: int_items_dedup
+    overrides:
+      macros:
+        is_incremental: false
+    given:
+      - input: ref('stg_items')
+        rows:
+          - {url_hash: "dup", source_name: "a", source_type: "rss", source_weight: 1.0, url: "https://e.com/x", discussion_url: null, title: "T", author: null, summary_raw: "", published_at: "2026-08-29 01:00:00+00", fetched_at: "2026-08-30 05:00:00+00", engagement: null}
+          - {url_hash: "dup", source_name: "b", source_type: "rss", source_weight: 0.9, url: "https://e.com/x", discussion_url: null, title: "T", author: null, summary_raw: "", published_at: "2026-08-29 02:00:00+00", fetched_at: "2026-08-30 05:00:00+00", engagement: null}
+          - {url_hash: "dup", source_name: "c", source_type: "rss", source_weight: 0.8, url: "https://e.com/x", discussion_url: null, title: "T", author: null, summary_raw: "", published_at: "2026-08-29 03:00:00+00", fetched_at: "2026-08-30 05:00:00+00", engagement: null}
+          - {url_hash: "dup", source_name: "d", source_type: "rss", source_weight: 0.7, url: "https://e.com/x", discussion_url: null, title: "T", author: null, summary_raw: "", published_at: "2026-08-29 04:00:00+00", fetched_at: "2026-08-30 05:00:00+00", engagement: null}
+          - {url_hash: "dup", source_name: "e", source_type: "rss", source_weight: 0.6, url: "https://e.com/x", discussion_url: null, title: "T", author: null, summary_raw: "", published_at: "2026-08-29 05:00:00+00", fetched_at: "2026-08-30 05:00:00+00", engagement: null}
+    expect:
+      rows:
+        - url_hash: "dup"
+          source_name: "a"
+          source_type: "rss"
+          source_weight: 1.0
+          url: "https://e.com/x"
+          discussion_url: null
+          title: "T"
+          author: null
+          summary_raw: ""
+          published_at: "2026-08-29 01:00:00+00"
+          last_fetched_at: "2026-08-30 05:00:00+00"
+          source_count: 5
+          seen_in: "a,b,c,d,e"
+          max_points: null
+          max_comments: null
+          max_stars: null
+          corroboration: 3
+
+  - name: distinct_items_are_not_merged
+    description: >
+      The inverse guard. Over-aggressive canonicalization would silently merge two
+      different papers, which is worse than a duplicate because the item disappears.
+    model: int_items_dedup
+    overrides:
+      macros:
+        is_incremental: false
+    given:
+      - input: ref('stg_items')
+        rows:
+          - {url_hash: "aaa", source_name: "arxiv_cs_cl", source_type: "rss", source_weight: 1.0, url: "https://arxiv.org/abs/2401.11111", discussion_url: null, title: "Paper One", author: null, summary_raw: "", published_at: "2026-08-29 01:00:00+00", fetched_at: "2026-08-30 05:00:00+00", engagement: null}
+          - {url_hash: "bbb", source_name: "arxiv_cs_cl", source_type: "rss", source_weight: 1.0, url: "https://arxiv.org/abs/2401.22222", discussion_url: null, title: "Paper Two", author: null, summary_raw: "", published_at: "2026-08-29 02:00:00+00", fetched_at: "2026-08-30 05:00:00+00", engagement: null}
+    expect:
+      rows:
+        - {url_hash: "aaa", source_name: "arxiv_cs_cl", source_type: "rss", source_weight: 1.0, url: "https://arxiv.org/abs/2401.11111", discussion_url: null, title: "Paper One", author: null, summary_raw: "", published_at: "2026-08-29 01:00:00+00", last_fetched_at: "2026-08-30 05:00:00+00", source_count: 1, seen_in: "arxiv_cs_cl", max_points: null, max_comments: null, max_stars: null, corroboration: 1}
+        - {url_hash: "bbb", source_name: "arxiv_cs_cl", source_type: "rss", source_weight: 1.0, url: "https://arxiv.org/abs/2401.22222", discussion_url: null, title: "Paper Two", author: null, summary_raw: "", published_at: "2026-08-29 02:00:00+00", last_fetched_at: "2026-08-30 05:00:00+00", source_count: 1, seen_in: "arxiv_cs_cl", max_points: null, max_comments: null, max_stars: null, corroboration: 1}
