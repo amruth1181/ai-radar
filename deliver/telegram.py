@@ -14,6 +14,8 @@ import os
 
 import httpx
 
+import settings  # noqa: F401  -- imported for its side effect: loads .env
+
 API_BASE = "https://api.telegram.org"
 
 # Telegram rejects a message outright if any of these appear unescaped in MarkdownV2.
