@@ -24,46 +24,39 @@ unit_tests:
         is_incremental: false
     given:
       - input: ref('stg_items')
-        rows:
-          # arXiv: earliest sighting, highest weight -> supplies title and url
-          - url_hash: "abc123"
-            source_name: "arxiv_cs_cl"
-            source_type: "rss"
-            source_weight: 1.0
-            url: "https://arxiv.org/abs/2401.11111"
-            discussion_url: null
-            title: "Canonical Title From arXiv"
-            author: "Researcher"
-            summary_raw: "The abstract."
-            published_at: "2026-08-28 09:00:00+00"
-            fetched_at: "2026-08-30 05:00:00+00"
-            engagement: null
-          # Hacker News: later, lower weight, but carries the engagement signal
-          - url_hash: "abc123"
-            source_name: "hn_ai"
-            source_type: "hackernews"
-            source_weight: 0.7
-            url: "https://arxiv.org/abs/2401.11111"
-            discussion_url: "https://news.ycombinator.com/item?id=1"
-            title: "Rehosted HN Title"
-            author: "poster"
-            summary_raw: ""
-            published_at: "2026-08-29 12:00:00+00"
-            fetched_at: "2026-08-30 05:00:00+00"
-            engagement: '{"points": 340, "comments": 88}'
-          # Reddit: third independent sighting, lower engagement than HN
-          - url_hash: "abc123"
-            source_name: "reddit_localllama"
-            source_type: "rss"
-            source_weight: 0.6
-            url: "https://arxiv.org/abs/2401.11111"
-            discussion_url: null
-            title: "Reddit Thread Title"
-            author: "u/someone"
-            summary_raw: ""
-            published_at: "2026-08-29 18:00:00+00"
-            fetched_at: "2026-08-30 05:00:00+00"
-            engagement: '{"points": 12, "comments": 3}'
+        # SQL format rather than dicts: the engagement column is JSON, and BigQuery
+        # rejects the implicit STRING -> JSON cast that DuckDB accepts. The typed
+        # literal `JSON '...'` is understood by both, and unlike a project macro it
+        # works here -- dbt does not expose macros inside unit-test fixtures.
+        format: sql
+        rows: |
+          -- arXiv: earliest sighting, highest weight -> supplies title and url
+          select 'abc123' as url_hash, 'arxiv_cs_cl' as source_name, 'rss' as source_type,
+                 1.0 as source_weight, 'https://arxiv.org/abs/2401.11111' as url,
+                 cast(null as string) as discussion_url,
+                 'Canonical Title From arXiv' as title, 'Researcher' as author,
+                 'The abstract.' as summary_raw,
+                 cast('2026-08-28 09:00:00+00' as timestamp) as published_at,
+                 cast('2026-08-30 05:00:00+00' as timestamp) as fetched_at,
+                 cast(null as json) as engagement
+          union all
+          -- Hacker News: later, lower weight, but carries the engagement signal
+          select 'abc123', 'hn_ai', 'hackernews', 0.7,
+                 'https://arxiv.org/abs/2401.11111',
+                 'https://news.ycombinator.com/item?id=1',
+                 'Rehosted HN Title', 'poster', '',
+                 cast('2026-08-29 12:00:00+00' as timestamp),
+                 cast('2026-08-30 05:00:00+00' as timestamp),
+                 json '{"points": 340, "comments": 88}'
+          union all
+          -- Reddit: third independent sighting, lower engagement than HN
+          select 'abc123', 'reddit_localllama', 'rss', 0.6,
+                 'https://arxiv.org/abs/2401.11111',
+                 cast(null as string),
+                 'Reddit Thread Title', 'u/someone', '',
+                 cast('2026-08-29 18:00:00+00' as timestamp),
+                 cast('2026-08-30 05:00:00+00' as timestamp),
+                 json '{"points": 12, "comments": 3}'
     expect:
       rows:
         - url_hash: "abc123"

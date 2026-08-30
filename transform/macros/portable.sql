@@ -31,3 +31,4 @@
         timestamp_sub(current_timestamp(), interval {{ n }} hour)
     {%- endif -%}
 {% endmacro %}
+
