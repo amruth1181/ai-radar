@@ -9,6 +9,7 @@ dependencies = [
     "dbt-duckdb>=1.11.0",
     "dlt[bigquery,duckdb]>=1.30.0",
     "feedparser>=6.0.14",
+    "google-cloud-bigquery-storage>=2.41.0",
     "httpx>=0.28.1",
     "python-dotenv>=1.2.3",
     "pyyaml>=6.0.3",
