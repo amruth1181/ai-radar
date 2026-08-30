@@ -1,0 +1,35 @@
+# The file that makes the digest yours.
+#
+# It goes into the enrichment prompt verbatim, so vague wording here produces vague
+# scores. Rewrite it whenever your focus shifts — after a couple of weeks of reading
+# the digest you will know exactly which lines are wrong.
+#
+# When junk appears in the digest, read the `reason` field on those items before
+# blaming the model. Nine times out of ten the profile was ambiguous.
+
+profile: |
+  I am an MSc student in AI Systems & Data Science with a background in data
+  engineering (Kafka, Spark, AWS). My current focus is the modern data stack
+  (dlt, dbt, BigQuery, DuckDB), MLOps, and RAG systems. I am job-hunting for
+  data engineering and ML engineering roles in Europe.
+
+  I care about things I could plausibly use or be asked about in an interview
+  within the next six months. I do not care about industry gossip.
+
+high_interest:
+  - Retrieval-augmented generation, embeddings, vector databases
+  - LLM serving, inference optimization, quantization, running models locally
+  - Data pipeline tooling: dlt, dbt, SQLMesh, Airflow, Dagster, Prefect
+  - MLOps: model registries, drift detection, feature stores, experiment tracking
+  - Open-weight model releases, especially with practical deployment detail
+  - Evaluation methodology: RAGAS, LLM-as-judge, benchmark design and critique
+  - Cloud data infrastructure: BigQuery, Snowflake, Databricks, DuckDB, AWS
+  - Concrete engineering write-ups with numbers, benchmarks, or post-mortems
+
+low_interest:
+  - Funding rounds, valuations, acquisitions, executive hires
+  - AI policy, regulation, and safety-governance commentary
+  - Consumer AI product launches with no technical detail
+  - Opinion and think-pieces with no new results
+  - Crypto, AI-adjacent hype, and speculation about AGI timelines
+  - Prompt-engineering listicles and "top 10 tools" posts
