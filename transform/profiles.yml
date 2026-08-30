@@ -1,0 +1,10 @@
+# Dev writes to the local DuckDB file that dlt also loads into; prod will point at
+# BigQuery in Phase 4. Path is relative to transform/, which is where dbt runs.
+ai_radar:
+  target: "{{ env_var('DBT_TARGET', 'dev') }}"
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('DUCKDB_PATH', '../ai_radar.duckdb') }}"
+      schema: analytics
+      threads: 4

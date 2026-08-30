@@ -1,0 +1,19 @@
+name: ai_radar
+version: 0.1.0
+config-version: 2
+
+profile: ai_radar
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  ai_radar:
+    staging:
+      +materialized: view
+    intermediate:
+      +materialized: incremental
+    marts:
+      +materialized: table
