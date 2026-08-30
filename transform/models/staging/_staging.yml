@@ -1,0 +1,17 @@
+version: 2
+
+models:
+  - name: stg_items
+    description: >
+      Cleaned raw sightings. Still one row per item PER SOURCE — duplicates across
+      sources are expected here and are collapsed downstream.
+    columns:
+      - name: url_hash
+        description: sha256[:16] of the canonical URL. The join key everywhere.
+        data_tests: [not_null]
+      - name: published_at
+        data_tests: [not_null]
+      - name: title
+        data_tests: [not_null]
+      - name: source_weight
+        data_tests: [not_null]

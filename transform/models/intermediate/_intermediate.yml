@@ -1,0 +1,27 @@
+version: 2
+
+models:
+  - name: int_items_dedup
+    description: >
+      One row per canonical URL, with the earliest sighting's timestamp, the maximum
+      engagement seen across sources, and a corroboration count.
+    columns:
+      - name: url_hash
+        description: >
+          The duplicate alarm. If `unique` fails here, canonicalization has a hole --
+          fix ingest/normalize.py and add the offending pair to tests/test_normalize.py.
+          Never loosen this test.
+        data_tests:
+          - unique
+          - not_null
+      - name: published_at
+        data_tests: [not_null]
+      - name: corroboration
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3]
+                quote: false
+      - name: source_count
+        data_tests: [not_null]

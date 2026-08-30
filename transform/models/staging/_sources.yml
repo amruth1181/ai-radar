@@ -1,0 +1,13 @@
+version: 2
+
+sources:
+  - name: raw
+    description: >
+      Append-only landing zone. dlt owns `items`; the enrichment step owns
+      `enrichments`. Nothing here is ever cleaned in place.
+    schema: raw
+    tables:
+      - name: items
+        description: One row per item per source sighting. Duplicates are expected here.
+      - name: enrichments
+        description: LLM triage output, keyed on url_hash. Empty until Phase 3.

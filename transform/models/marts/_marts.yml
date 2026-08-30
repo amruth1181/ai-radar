@@ -1,0 +1,34 @@
+version: 2
+
+models:
+  - name: fct_items
+    description: >
+      Deduplicated items joined to LLM triage, with final_score. One row per item;
+      enrichment columns are null until Phase 3 populates raw.enrichments.
+    columns:
+      - name: url_hash
+        data_tests:
+          - unique
+          - not_null
+      - name: final_score
+        data_tests: [not_null]
+      - name: age_hours
+        description: Never negative -- stg_items filters out future-dated items.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: relevance_score
+        description: Null until enrichment runs; bounded 0-10 once it does.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 10
+                inclusive: true
+      - name: category
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [model_release, research, tooling, industry, policy, tutorial, other]
