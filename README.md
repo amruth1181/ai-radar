@@ -2,7 +2,7 @@
 
 A daily AI-news digest built as a data pipeline. It ingests ~14 sources, deduplicates
 them, scores every item against a personal interest profile with an LLM, and delivers
-8–12 items to Telegram each morning.
+8–12 items to Discord each morning.
 
 Roughly 200 items surface across those sources every day. You want to read ten. No SQL
 rule can decide which ten — "is this interesting to *me*?" is not expressible as a
@@ -17,7 +17,7 @@ Runs on GitHub Actions. No server. Under $2/month, and $0 on the default backend
 
 The obvious version of this project is a feed with a nice UI. That version fails, because
 the hard part isn't display — it's **source curation and relevance filtering**. A dashboard
-nobody opens is worse than a Telegram message read over coffee.
+nobody opens is worse than a Discord message read over coffee.
 
 So: pipeline first, delivery second, UI maybe never. Every design choice below defends
 against the one real risk, which is that you stop reading it after three weeks.
@@ -97,7 +97,7 @@ All sources, fail-soft, with a verified incremental cursor.
 | `ingest/pipeline.py` | Dispatch table from source type to resource factory, plus the fail-soft loop and `RunReport`. |
 | `ingest/sources/hackernews.py` | Algolia search API. Free, no key, and carries engagement signal (points, comments). |
 | `ingest/sources/github.py` | Repository search for new, fast-growing LLM/RAG/MLOps repos. |
-| `ingest/sources/reddit.py` | r/LocalLLaMA via OAuth client-credentials. Unauthenticated Reddit returns 403. |
+| Reddit (r/LocalLLaMA) | Served by the RSS resource, not a bespoke module — the public `/top/.rss` endpoint needs no credentials. |
 | `scripts/validate_feeds.py` | Fetches every configured feed and reports entry counts. Run weekly; feed URLs rot. |
 
 **Fail-soft is the central rule.** One dead feed must never cost you the digest. Failures
@@ -257,7 +257,7 @@ ai-radar/
 ├── ingest/
 │   ├── normalize.py           # canonicalize() + url_hash()
 │   ├── pipeline.py            # dispatch table, fail-soft loop
-│   └── sources/               # rss, hackernews, github, reddit
+│   └── sources/               # rss, hackernews, github
 ├── enrich/
 │   ├── backends/              # base, glm, claude
 │   ├── prompts.py
@@ -322,7 +322,6 @@ credentials degrade gracefully rather than crashing.
 |---|---|
 | `DISCORD_WEBHOOK_URL` | A private Discord server you own — Channel → Integrations → Webhooks |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Optional. @BotFather, then `/getUpdates` for the chat ID |
-| `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET` | reddit.com/prefs/apps, "script" app |
 | `GLM_API_KEY` | z.ai |
 | `ANTHROPIC_API_KEY` | console.anthropic.com, only if using the Claude backend |
 | `GCP_SA_KEY` | Service account JSON — BigQuery Data Editor + Job User |
@@ -361,8 +360,12 @@ uv run python -m ingest.pipeline   # should add ~0 rows
   that publishes weekly. Each feed gets its own resource name writing into one shared table.
 - **Anthropic publishes no RSS feed.** Every candidate path 404s. Their announcements arrive
   via Hacker News and Simon Willison instead.
-- **Unauthenticated Reddit is dead.** The `.json` endpoints return 403 even with a
-  descriptive User-Agent. OAuth is now mandatory.
+- **Reddit's JSON API is effectively closed, but its RSS is not.** The `.json` endpoints
+  return 403, and OAuth access now needs manual approval under the Responsible Builder
+  Policy, which rejects most hobby projects. The public `/top/.rss?t=day` endpoint needs
+  neither — and ranking by the day's top posts is a better filter than the upvote
+  threshold the API would have given. It rate-limits hard, so fetch it once a day and
+  send a descriptive User-Agent.
 - **Naive datetimes silently break the dlt cursor.** `_parse_date` always returns tz-aware
   UTC, using `timegm` rather than `mktime`, because feedparser's `*_parsed` struct_times are
   already UTC.
@@ -374,7 +377,7 @@ uv run python -m ingest.pipeline   # should add ~0 rows
 | Risk | Mitigation |
 |---|---|
 | Feed URLs rot | Weekly validation script; treat a 7-day silence as an alert, not a quiet week |
-| Reddit tightens access further | Fail soft — it is one source of fourteen |
+| Reddit closes its RSS too | Fail soft — it is one source of fourteen |
 | Duplicates escape canonicalization | dbt `unique` test as a hard gate; every escape becomes a test case |
 | The LLM returns malformed JSON | Try/except per item, skip on failure, log the rate — that rate decides which backend to use |
 | Actions skips a scheduled run | The 26-hour window makes the next run self-healing |

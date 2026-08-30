@@ -90,12 +90,18 @@ sources:
     weight: 0.7
     category_hint: industry
 
-  # Requires REDDIT_CLIENT_ID/REDDIT_CLIENT_SECRET. Unauthenticated Reddit
-  # returns 403 regardless of User-Agent. Fails soft if credentials are absent.
+  # Reddit's JSON API now requires OAuth *and* manual approval under the
+  # Responsible Builder Policy, which rejects most hobby projects. The public
+  # RSS endpoint needs neither and still works.
+  #
+  # /top/?t=day rather than /new/: RSS carries no upvote count, so there is no
+  # min_upvotes to filter on. Letting the community rank the day first is a
+  # better filter than anything we could apply afterwards.
+  #
+  # Reddit rate-limits this hard. Once per day is fine; hammering it returns 429.
   - name: reddit_localllama
-    type: reddit
-    subreddit: LocalLLaMA
-    min_upvotes: 100
+    type: rss
+    url: https://www.reddit.com/r/LocalLLaMA/top/.rss?t=day
     weight: 0.6
     category_hint: tooling
 

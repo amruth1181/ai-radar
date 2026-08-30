@@ -10,6 +10,7 @@ Statuses:
     EMPTY   reachable and parseable, but nothing in the window. Normal for arXiv at
             weekends (it declares <skipDays>Saturday,Sunday</skipDays>), suspicious
             for anything else more than a couple of days running.
+    RATE    rate limited by the host; retry later
     AUTH    credentials missing or rejected
     DEAD    unreachable, or the response could not be parsed
 """
@@ -27,12 +28,19 @@ import httpx  # noqa: E402
 
 import settings  # noqa: E402,F401  -- loads .env
 from ingest.pipeline import load_sources  # noqa: E402
+from ingest.sources.rss import USER_AGENT  # noqa: E402
 
 LOOKBACK_DAYS = 3
 
 
 def check_rss(src: dict) -> tuple[str, int, str]:
-    feed = feedparser.parse(src["url"])
+    # Same agent the resource uses. feedparser's default identifies as feedparser,
+    # which Reddit throttles hard.
+    feed = feedparser.parse(src["url"], agent=USER_AGENT)
+
+    if getattr(feed, "status", None) == 429:
+        return "RATE", 0, "rate limited — retry later"
+
     count = len(feed.entries)
     if count:
         return "OK", count, ""
@@ -93,45 +101,10 @@ def check_github(src: dict) -> tuple[str, int, str]:
     return ("OK" if total else "EMPTY"), total, ""
 
 
-def check_reddit(src: dict) -> tuple[str, int, str]:
-    client_id = settings.get("REDDIT_CLIENT_ID")
-    client_secret = settings.get("REDDIT_CLIENT_SECRET")
-    if not client_id or not client_secret:
-        return "AUTH", 0, "REDDIT_CLIENT_ID/SECRET not set"
-
-    user_agent = settings.get("REDDIT_USER_AGENT", "ai-radar/0.1")
-    token_response = httpx.post(
-        "https://www.reddit.com/api/v1/access_token",
-        auth=(client_id, client_secret),
-        data={"grant_type": "client_credentials"},
-        headers={"User-Agent": user_agent},
-        timeout=30,
-    )
-    if token_response.status_code != 200:
-        return "AUTH", 0, f"token HTTP {token_response.status_code}"
-
-    listing = httpx.get(
-        f"https://oauth.reddit.com/r/{src['subreddit']}/new",
-        headers={
-            "Authorization": f"Bearer {token_response.json()['access_token']}",
-            "User-Agent": user_agent,
-        },
-        params={"limit": 100},
-        timeout=30,
-    )
-    if listing.status_code != 200:
-        return "DEAD", 0, f"HTTP {listing.status_code}"
-
-    posts = listing.json()["data"]["children"]
-    above = [p for p in posts if (p["data"].get("ups") or 0) >= src.get("min_upvotes", 100)]
-    return ("OK" if above else "EMPTY"), len(above), f"{len(posts)} fetched"
-
-
 CHECKS = {
     "rss": check_rss,
     "hackernews": check_hackernews,
     "github": check_github,
-    "reddit": check_reddit,
 }
 
 

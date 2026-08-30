@@ -16,7 +16,6 @@ import yaml
 
 from ingest.sources.github import github_resource
 from ingest.sources.hackernews import hn_resource
-from ingest.sources.reddit import reddit_resource
 from ingest.sources.rss import rss_resource
 
 log = logging.getLogger(__name__)
@@ -28,12 +27,12 @@ DATASET_NAME = "raw"
 
 # Source type -> resource factory. Each factory takes the whole config entry, because
 # the types need different keys: an RSS feed has a url, HN has queries and a points
-# floor, GitHub has a search query, Reddit has a subreddit.
+# floor, GitHub has topics. Reddit is an RSS feed now -- its JSON API requires
+# manual approval that hobby projects rarely get.
 DISPATCH = {
     "rss": rss_resource,
     "hackernews": hn_resource,
     "github": github_resource,
-    "reddit": reddit_resource,
 }
 
 

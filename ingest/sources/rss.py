@@ -23,6 +23,12 @@ from ingest.sources._common import ITEM_COLUMNS, build_item
 # up a useful window rather than only what appeared in the last few minutes.
 LOOKBACK_DAYS = 3
 
+# feedparser's default agent identifies as feedparser, which Reddit throttles hard.
+# A descriptive agent naming the project and a contact URL is what Reddit asks for.
+USER_AGENT = (
+    "Mozilla/5.0 (compatible; ai-radar/0.1; +https://github.com/amruth1181/ai-radar)"
+)
+
 
 
 def _parse_date(entry) -> datetime | None:
@@ -61,7 +67,12 @@ def rss_resource(src: dict):
             initial_value=datetime.now(timezone.utc) - timedelta(days=LOOKBACK_DAYS),
         ),
     ):
-        feed = feedparser.parse(feed_url)
+        feed = feedparser.parse(feed_url, agent=USER_AGENT)
+
+        # Reddit rate-limits its RSS aggressively. Say so plainly rather than letting
+        # it surface as "could not parse a feed", which sends you hunting a dead URL.
+        if getattr(feed, "status", None) == 429:
+            raise RuntimeError(f"{source_name}: rate limited (HTTP 429) by {feed_url}")
 
         # A valid feed with zero entries is NOT an error. arXiv declares
         # <skipDays>Saturday,Sunday</skipDays> and serves an empty channel all weekend;
