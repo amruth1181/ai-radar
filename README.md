@@ -38,8 +38,8 @@ against the one real risk, which is that you stop reading it after three weeks.
                                     │
                     ┌───────────────┼───────────────┐
                     ▼               ▼               ▼
-               Telegram        Gmail SMTP     static HTML
-              (primary)         (mirror)      → GitHub Pages
+                Discord        Gmail SMTP     static HTML
+               (primary)        (mirror)      → GitHub Pages
                     └───────────────┴───────────────┘
                                     │
                                     ▼
@@ -59,7 +59,7 @@ Orchestration: GitHub Actions, cron 05:00 UTC
 | Prod warehouse | **BigQuery** | Free tier is generous at this volume. Partitioned by date, clustered by source. |
 | Transformation | **dbt-core** | The dedupe logic belongs in SQL with tests and lineage, not in Python. |
 | Enrichment | **GLM or Claude Haiku 4.5** | Swappable behind one interface. GLM is free; Haiku is ~$1.20/month with the Batch API. |
-| Delivery | **Telegram, Gmail, GitHub Pages** | Three renderers over one table. No domain, no deliverability problems, no server. |
+| Delivery | **Discord, Gmail, GitHub Pages** | Three renderers over one table. No domain, no deliverability problems, no server. |
 | Orchestration | **GitHub Actions** | Cron, secrets and logs are all built in and free for public repos. |
 | Config | **YAML** | Sources and the interest profile change often. Hardcode them and you stop editing them. |
 
@@ -79,8 +79,10 @@ loop end to end before adding a single piece of complexity.
 | `ingest/normalize.py` | `canonicalize()`, `url_hash()` and `strip_html()`. The most important 100 lines in the project. |
 | `tests/test_normalize.py` | Pins canonicalization behaviour across arXiv variants, tracking params, ports, fragments and query ordering. |
 | `ingest/sources/rss.py` | Generic RSS/Atom dlt resource, parameterised by URL. |
-| `deliver/telegram.py` | MarkdownV2 escaping, 4096-char chunking, stdout fallback when no token is set. |
-| `tests/test_telegram.py` | Guards the escaping, because one missed character silently drops the whole digest. |
+| `deliver/discord.py` | Primary channel. Webhook POST, rich embeds coloured by category, 2000-char chunking. |
+| `deliver/telegram.py` | Second renderer. MarkdownV2 escaping and 4096-char chunking. |
+| `tests/test_discord.py`, `tests/test_telegram.py` | Guard the formatting, because a bad message means no digest rather than a loud error. |
+| `settings.py` | Loads `.env` from the repo root, with real environment variables taking precedence. |
 | `.gitignore` | Hardened for `*.duckdb`, `.env` and service-account JSON before anything exists to leak. |
 
 ---
@@ -192,10 +194,17 @@ Both channels reuse `build_digest()`. Neither touches the pipeline.
 | `deliver/templates/` | Shared Jinja templates, so the email and the site never drift apart. |
 | `gh-pages` branch | Published by the daily workflow. Never sleeps, no credentials, permanent URL. |
 
-Two channels were considered and rejected:
+**Slack** is planned as a fourth renderer, deliberately built last — an incoming webhook and
+Block Kit formatting, once the pipeline itself is finished.
 
-- **Outlook / Microsoft 365** — Microsoft permanently disabled Basic Auth for SMTP AUTH on
-  1 March 2026, and Outlook.com personal accounts cannot enable it at all. App passwords no
+Three channels were considered and rejected:
+
+- **Microsoft Teams** — Microsoft disabled Office 365 Connectors, the classic Teams incoming
+  webhook, during 18–22 May 2026. The replacement is a Power Automate *Workflows* webhook,
+  which needs a work or school M365 account, is configured as a flow rather than a copied
+  URL, and posts under the generic Flow bot identity with no custom name or icon.
+- **Outlook / Microsoft 365 email** — Microsoft permanently disabled Basic Auth for SMTP AUTH
+  on 1 March 2026, and Outlook.com personal accounts cannot enable it at all. App passwords no
   longer work there. OAuth2 only, which is far too much machinery for a cron job.
 - **Streamlit Community Cloud** — free-tier apps sleep after 12 hours without traffic. A
   once-daily digest site would be asleep almost every time anyone opened it, and it would
@@ -273,7 +282,7 @@ ai-radar/
 uv sync                              # install dependencies
 uv run pytest                        # run the test suite
 uv run python -m ingest.pipeline     # fetch feeds into ai_radar.duckdb
-uv run python -m deliver.telegram    # render a message (prints if no token set)
+uv run python -m deliver.discord     # render a message (prints if no webhook set)
 ```
 
 Inspect what landed:
@@ -311,7 +320,8 @@ credentials degrade gracefully rather than crashing.
 
 | Secret | Where it comes from |
 |---|---|
-| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | @BotFather, then `/getUpdates` for the chat ID |
+| `DISCORD_WEBHOOK_URL` | A private Discord server you own — Channel → Integrations → Webhooks |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Optional. @BotFather, then `/getUpdates` for the chat ID |
 | `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET` | reddit.com/prefs/apps, "script" app |
 | `GLM_API_KEY` | z.ai |
 | `ANTHROPIC_API_KEY` | console.anthropic.com, only if using the Claude backend |
