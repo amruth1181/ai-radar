@@ -16,6 +16,7 @@ first dbt build. Idempotent: safe to run on every pipeline execution.
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -29,6 +30,29 @@ DEFAULT_DB = settings.REPO_ROOT / "ai_radar.duckdb"
 
 # Enrichment lives apart from raw.items on purpose: the prompt can be rewritten and
 # re-run without touching ingested data, and two prompt versions can be diffed.
+# dlt owns raw.items and creates it on first load. CI never ingests, so it needs an
+# empty one to build against -- hence the opt-in flag rather than creating it always,
+# which would risk dlt loading into a table it did not define.
+ITEMS_DDL = """
+create table if not exists raw.items (
+    url_hash        varchar not null,
+    source_name     varchar,
+    source_type     varchar,
+    source_weight   double,
+    external_id     varchar,
+    url             varchar,
+    discussion_url  varchar,
+    title           varchar,
+    author          varchar,
+    summary_raw     varchar,
+    published_at    timestamptz,
+    fetched_at      timestamptz,
+    engagement      json,
+    _dlt_load_id    varchar,
+    _dlt_id         varchar
+)
+"""
+
 DDL = [
     "create schema if not exists raw",
     """
@@ -55,18 +79,28 @@ DDL = [
 ]
 
 
-def init(db_path: Path | str = DEFAULT_DB) -> None:
+def init(db_path: Path | str = DEFAULT_DB, with_items: bool = False) -> None:
     con = duckdb.connect(str(db_path))
     try:
         for statement in DDL:
             con.execute(statement)
+        if with_items:
+            con.execute(ITEMS_DDL)
     finally:
         con.close()
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Create Python-owned warehouse tables.")
+    parser.add_argument(
+        "--with-items",
+        action="store_true",
+        help="also create an empty raw.items (CI only; dlt owns it otherwise)",
+    )
+    args = parser.parse_args()
+
     db_path = settings.get("DUCKDB_PATH") or DEFAULT_DB
-    init(db_path)
+    init(db_path, with_items=args.with_items)
 
     con = duckdb.connect(str(db_path), read_only=True)
     try:
