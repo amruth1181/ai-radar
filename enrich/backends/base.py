@@ -13,24 +13,53 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 
+def first_text_block(message) -> str:
+    """Return the first text block's content, or "" if there is none.
+
+    Never index content[0] blindly. GLM-4.5-Flash returns a thinking block first and
+    the answer second, so content[0].text raises AttributeError. Any model with
+    reasoning enabled behaves the same way.
+    """
+    for block in getattr(message, "content", []) or []:
+        if getattr(block, "type", None) == "text":
+            return getattr(block, "text", "") or ""
+    return ""
+
+
 @dataclass
 class EnrichmentResult:
-    """What a backend produces, plus what it cost to find out."""
+    """What a backend produced, plus what it cost to find out.
+
+    Failures are counted by kind, because they mean opposite things. Malformed JSON is
+    a model-quality problem and an argument for switching backend. Rate limiting is a
+    throughput problem and an argument for lowering concurrency. Reporting both as one
+    number sends you to fix the wrong thing.
+    """
 
     rows: list[dict] = field(default_factory=list)
     attempted: int = 0
-    failed: int = 0
+    malformed: int = 0
+    rate_limited: int = 0
+    errored: int = 0
 
     @property
-    def failure_rate(self) -> float:
-        """The number that decides whether a backend is good enough."""
-        return self.failed / self.attempted if self.attempted else 0.0
+    def failed(self) -> int:
+        return self.malformed + self.rate_limited + self.errored
+
+    @property
+    def malformed_rate(self) -> float:
+        """The number that decides whether a backend's quality is good enough."""
+        return self.malformed / self.attempted if self.attempted else 0.0
 
     def summary(self) -> str:
-        return (
-            f"{len(self.rows)}/{self.attempted} enriched"
-            + (f" · {self.failed} failed ({self.failure_rate:.0%})" if self.failed else "")
-        )
+        parts = [f"{len(self.rows)}/{self.attempted} enriched"]
+        if self.malformed:
+            parts.append(f"{self.malformed} malformed ({self.malformed_rate:.0%})")
+        if self.rate_limited:
+            parts.append(f"{self.rate_limited} rate-limited")
+        if self.errored:
+            parts.append(f"{self.errored} errored")
+        return " · ".join(parts)
 
 
 class EnrichmentBackend(ABC):

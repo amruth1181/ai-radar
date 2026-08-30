@@ -18,7 +18,7 @@ import time
 import anthropic
 
 import settings
-from enrich.backends.base import EnrichmentBackend, EnrichmentResult
+from enrich.backends.base import EnrichmentBackend, EnrichmentResult, first_text_block
 from enrich.prompts import build_user, parse_response
 
 log = logging.getLogger(__name__)
@@ -79,7 +79,7 @@ class ClaudeBackend(EnrichmentBackend):
                 result.failed += 1
                 continue
 
-            payload = parse_response(entry.result.message.content[0].text)
+            payload = parse_response(first_text_block(entry.result.message))
             if payload is None:
                 log.warning("unparseable JSON for %s", entry.custom_id)
                 result.failed += 1

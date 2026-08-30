@@ -157,10 +157,10 @@ def main() -> int:
         print(f"{result.summary()} · {written} written")
         # The failure rate is the number that decides whether a backend is good
         # enough. Surfaced on every run rather than buried in logs.
-        if result.failure_rate > 0.10:
+        if result.malformed_rate > 0.10:
             log.warning(
                 "malformed-JSON rate %.0f%% is high — consider ENRICH_BACKEND=claude",
-                result.failure_rate * 100,
+                result.malformed_rate * 100,
             )
         return 0
     finally:

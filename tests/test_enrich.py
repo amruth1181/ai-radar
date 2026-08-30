@@ -128,3 +128,71 @@ class TestPromptBuilding:
             "summary_raw": "x" * 99_999,
         }
         assert len(build_user(item)) < 3000
+
+
+class TestFirstTextBlock:
+    """GLM-4.5-Flash returns a thinking block first and the answer second.
+
+    Indexing content[0] blindly raised AttributeError against the live API — this is
+    that bug pinned down.
+    """
+
+    class Block:
+        def __init__(self, type_, **kw):
+            self.type = type_
+            for k, v in kw.items():
+                setattr(self, k, v)
+
+    class Message:
+        def __init__(self, content):
+            self.content = content
+
+    def test_skips_leading_thinking_block(self):
+        from enrich.backends.base import first_text_block
+
+        msg = self.Message(
+            [
+                self.Block("thinking", thinking="a long chain of reasoning"),
+                self.Block("text", text='{"relevance_score": 8}'),
+            ]
+        )
+        assert first_text_block(msg) == '{"relevance_score": 8}'
+
+    def test_plain_text_first_still_works(self):
+        from enrich.backends.base import first_text_block
+
+        assert first_text_block(self.Message([self.Block("text", text="OK")])) == "OK"
+
+    def test_no_text_block_returns_empty_not_crash(self):
+        from enrich.backends.base import first_text_block
+
+        msg = self.Message([self.Block("thinking", thinking="only reasoning")])
+        assert first_text_block(msg) == ""
+
+    def test_empty_content_returns_empty(self):
+        from enrich.backends.base import first_text_block
+
+        assert first_text_block(self.Message([])) == ""
+
+
+class TestFailureAccounting:
+    """Malformed JSON and rate limiting mean opposite things and must not be conflated."""
+
+    def test_kinds_are_counted_separately(self):
+        from enrich.backends.base import EnrichmentResult
+
+        r = EnrichmentResult(attempted=10, malformed=1, rate_limited=4, errored=1)
+        assert r.failed == 6
+        # Only malformed reflects model quality; rate limiting is a throughput problem.
+        assert r.malformed_rate == 0.1
+
+    def test_rate_limits_do_not_inflate_the_quality_metric(self):
+        from enrich.backends.base import EnrichmentResult
+
+        r = EnrichmentResult(attempted=5, rate_limited=5)
+        assert r.malformed_rate == 0.0
+
+    def test_zero_attempts_does_not_divide_by_zero(self):
+        from enrich.backends.base import EnrichmentResult
+
+        assert EnrichmentResult().malformed_rate == 0.0
