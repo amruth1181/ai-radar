@@ -14,21 +14,20 @@ be rewritten and re-run without touching ingested data.
 from __future__ import annotations
 
 import argparse
-import json
+
 import logging
 from pathlib import Path
 
-import duckdb
 import yaml
 
 import settings
 from enrich.backends import get_backend
 from enrich.prompts import build_system
+from warehouse import Warehouse, get_warehouse
 
 log = logging.getLogger(__name__)
 
 PROFILE_PATH = settings.REPO_ROOT / "config" / "profile.yaml"
-DEFAULT_DB = settings.REPO_ROOT / "ai_radar.duckdb"
 
 # Matches the digest window in fct_daily_digest. Wider than 24h so a late or skipped
 # run does not drop items into a gap.
@@ -47,10 +46,10 @@ select
     i.source_name,
     i.summary_raw,
     cast(i.published_at as varchar) as published_at
-from analytics.int_items_dedup i
-left join raw.enrichments e on i.url_hash = e.url_hash
+from {dedup} i
+left join {enrichments} e on i.url_hash = e.url_hash
 where e.url_hash is null
-  and i.published_at >= now() - interval {window} hour
+  and i.published_at >= {cutoff}
 order by i.source_weight desc, i.published_at desc
 limit {limit}
 """
@@ -83,38 +82,55 @@ def prefilter(items: list[dict]) -> tuple[list[dict], list[tuple[str, str]]]:
     return kept, dropped
 
 
-def fetch_candidates(con, limit: int = MAX_ITEMS, window: int = WINDOW_HOURS) -> list[dict]:
-    query = SELECT_CANDIDATES.format(window=window, limit=limit)
-    cursor = con.execute(query)
-    columns = [d[0] for d in cursor.description]
-    return [dict(zip(columns, row)) for row in cursor.fetchall()]
-
-
-def write_back(con, rows: list[dict]) -> int:
-    if not rows:
-        return 0
-    con.executemany(
-        """
-        insert into raw.enrichments
-            (url_hash, summary, category, entities, relevance_score, reason,
-             model, enriched_at)
-        values (?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        [
-            (
-                r["url_hash"],
-                r["summary"],
-                r["category"],
-                json.dumps(r["entities"]),
-                r["relevance_score"],
-                r["reason"],
-                r["model"],
-                r["enriched_at"],
-            )
-            for r in rows
-        ],
+def fetch_candidates(
+    wh: Warehouse, limit: int = MAX_ITEMS, window: int = WINDOW_HOURS
+) -> list[dict]:
+    """Unenriched items inside the window, most trusted sources first."""
+    cutoff = (
+        f"now() - interval {window} hour"
+        if wh.target == "dev"
+        else f"timestamp_sub(current_timestamp(), interval {window} hour)"
     )
-    return len(rows)
+    return wh.query(
+        SELECT_CANDIDATES.format(
+            dedup=wh.table("analytics", "int_items_dedup"),
+            enrichments=wh.table("raw", "enrichments"),
+            cutoff=cutoff,
+            limit=limit,
+        )
+    )
+
+
+def write_back(wh: Warehouse, rows: list[dict]) -> int:
+    return wh.insert("raw", "enrichments", rows)
+
+
+def enrich_pending(
+    wh: Warehouse, limit: int = MAX_ITEMS, window: int = WINDOW_HOURS,
+    backend_name: str | None = None,
+):
+    """Select, filter, score and persist. Returns the backend's EnrichmentResult."""
+    from enrich.backends.base import EnrichmentResult
+
+    candidates = fetch_candidates(wh, limit=limit, window=window)
+    kept, dropped = prefilter(candidates)
+    for url_hash, reason in dropped:
+        log.info("skipped %s: %s", url_hash, reason)
+
+    if not kept:
+        return EnrichmentResult(attempted=0)
+
+    backend = get_backend(backend_name)
+    log.info("backend: %s (%s)", backend.name, backend.model)
+    result = backend.enrich(kept, build_system(load_profile()))
+    write_back(wh, result.rows)
+
+    if result.malformed_rate > 0.10:
+        log.warning(
+            "malformed-JSON rate %.0f%% is high — consider ENRICH_BACKEND=claude",
+            result.malformed_rate * 100,
+        )
+    return result
 
 
 def main() -> int:
@@ -129,42 +145,20 @@ def main() -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
-    db_path = settings.get("DUCKDB_PATH") or DEFAULT_DB
-    con = duckdb.connect(str(db_path))
-    try:
-        candidates = fetch_candidates(con, limit=args.limit, window=args.window)
-        kept, dropped = prefilter(candidates)
-
-        print(f"{len(candidates)} candidates · {len(kept)} to score · {len(dropped)} filtered")
-        for url_hash, reason in dropped:
-            log.info("skipped %s: %s", url_hash, reason)
-
+    with get_warehouse() as wh:
         if args.dry_run:
+            candidates = fetch_candidates(wh, limit=args.limit, window=args.window)
+            kept, dropped = prefilter(candidates)
+            print(f"{len(candidates)} candidates · {len(kept)} to score · {len(dropped)} filtered")
             for item in kept:
                 print(f"  {item['source_name']:<20} {item['title'][:60]}")
             return 0
 
-        if not kept:
-            print("nothing to enrich")
-            return 0
-
-        backend = get_backend(args.backend)
-        print(f"backend: {backend.name} ({backend.model})")
-
-        result = backend.enrich(kept, build_system(load_profile()))
-        written = write_back(con, result.rows)
-
-        print(f"{result.summary()} · {written} written")
-        # The failure rate is the number that decides whether a backend is good
-        # enough. Surfaced on every run rather than buried in logs.
-        if result.malformed_rate > 0.10:
-            log.warning(
-                "malformed-JSON rate %.0f%% is high — consider ENRICH_BACKEND=claude",
-                result.malformed_rate * 100,
-            )
+        result = enrich_pending(
+            wh, limit=args.limit, window=args.window, backend_name=args.backend
+        )
+        print(result.summary())
         return 0
-    finally:
-        con.close()
 
 
 if __name__ == "__main__":
