@@ -28,9 +28,19 @@ BIGQUERY_SCHEMAS = {"raw": "ai_radar_raw", "analytics": "ai_radar_marts"}
 
 
 class Warehouse(ABC):
-    """The four operations Python performs against the warehouse."""
+    """The operations Python performs against the warehouse.
+
+    The two SQL fragments that differ between dialects live here rather than at the
+    call sites. `cast(x as varchar)` is valid DuckDB and a 400 on BigQuery, and that
+    kind of leak only surfaces in production, where it is most expensive to find.
+    """
 
     target: str
+    text_type: str = "varchar"
+
+    def hours_ago(self, n: int) -> str:
+        """A timestamp n hours in the past."""
+        return f"now() - interval {n} hour"
 
     @abstractmethod
     def table(self, schema: str, name: str) -> str:
@@ -60,6 +70,7 @@ class Warehouse(ABC):
 
 class DuckDBWarehouse(Warehouse):
     target = "dev"
+    text_type = "varchar"
 
     def __init__(self, path: str | None = None):
         import duckdb
@@ -95,6 +106,10 @@ class DuckDBWarehouse(Warehouse):
 
 class BigQueryWarehouse(Warehouse):
     target = "prod"
+    text_type = "string"
+
+    def hours_ago(self, n: int) -> str:
+        return f"timestamp_sub(current_timestamp(), interval {n} hour)"
 
     def __init__(self, project: str | None = None):
         from google.cloud import bigquery

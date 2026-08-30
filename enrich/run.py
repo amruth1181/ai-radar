@@ -45,7 +45,7 @@ select
     i.title,
     i.source_name,
     i.summary_raw,
-    cast(i.published_at as varchar) as published_at
+    cast(i.published_at as {text_type}) as published_at
 from {dedup} i
 left join {enrichments} e on i.url_hash = e.url_hash
 where e.url_hash is null
@@ -86,16 +86,12 @@ def fetch_candidates(
     wh: Warehouse, limit: int = MAX_ITEMS, window: int = WINDOW_HOURS
 ) -> list[dict]:
     """Unenriched items inside the window, most trusted sources first."""
-    cutoff = (
-        f"now() - interval {window} hour"
-        if wh.target == "dev"
-        else f"timestamp_sub(current_timestamp(), interval {window} hour)"
-    )
     return wh.query(
         SELECT_CANDIDATES.format(
             dedup=wh.table("analytics", "int_items_dedup"),
             enrichments=wh.table("raw", "enrichments"),
-            cutoff=cutoff,
+            cutoff=wh.hours_ago(window),
+            text_type=wh.text_type,
             limit=limit,
         )
     )

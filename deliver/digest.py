@@ -98,17 +98,12 @@ def build_digest(
     try:
         rows = wh.query(DIGEST_SQL.format(digest=wh.table("analytics", "fct_daily_digest")))
 
-        cutoff = (
-            "now() - interval 26 hour"
-            if wh.target == "dev"
-            else "timestamp_sub(current_timestamp(), interval 26 hour)"
-        )
         stats = wh.query(
             STATS_SQL.format(
                 items=wh.table("raw", "items"),
                 enrichments=wh.table("raw", "enrichments"),
                 fct=wh.table("analytics", "fct_items"),
-                cutoff=cutoff,
+                cutoff=wh.hours_ago(26),
             )
         )[0]
 
