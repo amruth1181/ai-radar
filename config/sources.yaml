@@ -81,3 +81,31 @@ sources:
     url: https://lobste.rs/t/ai.rss
     weight: 0.8
     category_hint: tooling
+
+  # --- Aggregators: APIs ---------------------------------------------------
+  - name: hn_ai
+    type: hackernews
+    queries: ["LLM", "AI model", "machine learning", "transformer", "RAG"]
+    min_points: 50
+    weight: 0.7
+    category_hint: industry
+
+  # Requires REDDIT_CLIENT_ID/REDDIT_CLIENT_SECRET. Unauthenticated Reddit
+  # returns 403 regardless of User-Agent. Fails soft if credentials are absent.
+  - name: reddit_localllama
+    type: reddit
+    subreddit: LocalLLaMA
+    min_upvotes: 100
+    weight: 0.6
+    category_hint: tooling
+
+  # --- Tooling / repos -----------------------------------------------------
+  - name: github_llm_repos
+    type: github
+    # One search per topic: the REST API rejects `topic:a OR topic:b` with a 422,
+    # and space-separating them requires a repo to carry ALL the topics.
+    topics: [llm, rag, mlops, llmops, agents]
+    min_stars: 100
+    created_within_days: 7
+    weight: 0.8
+    category_hint: tooling

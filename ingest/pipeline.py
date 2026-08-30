@@ -14,6 +14,9 @@ from pathlib import Path
 import dlt
 import yaml
 
+from ingest.sources.github import github_resource
+from ingest.sources.hackernews import hn_resource
+from ingest.sources.reddit import reddit_resource
 from ingest.sources.rss import rss_resource
 
 log = logging.getLogger(__name__)
@@ -23,9 +26,14 @@ CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "sources.yaml"
 PIPELINE_NAME = "ai_radar"
 DATASET_NAME = "raw"
 
-# Source type -> resource factory. Phase 1 adds hackernews, github and reddit.
+# Source type -> resource factory. Each factory takes the whole config entry, because
+# the types need different keys: an RSS feed has a url, HN has queries and a points
+# floor, GitHub has a search query, Reddit has a subreddit.
 DISPATCH = {
     "rss": rss_resource,
+    "hackernews": hn_resource,
+    "github": github_resource,
+    "reddit": reddit_resource,
 }
 
 
@@ -76,18 +84,32 @@ def run(destination: str = "duckdb", only: str | None = None) -> RunReport:
             continue
 
         try:
-            resource = factory(
-                source_name=name,
-                feed_url=src.get("url"),
-                weight=src.get("weight", 1.0),
-            )
-            pipeline.run(resource)
+            pipeline.run(factory(src))
             report.loaded[name] = _rows_loaded(pipeline)
         except Exception as exc:  # noqa: BLE001 - fail soft, report at the end
-            log.warning("source %s failed: %s", name, exc)
-            report.failures.append((name, str(exc)))
+            reason = _root_cause(exc)
+            log.warning("source %s failed: %s", name, reason)
+            report.failures.append((name, reason))
 
     return report
+
+
+def _root_cause(exc: BaseException) -> str:
+    """Unwrap to the innermost exception message.
+
+    dlt wraps extraction errors in PipelineStepFailed -> ResourceExtractionError, so
+    str(exc) is several lines of load-package plumbing with the actual reason buried at
+    the bottom. This text ends up in the digest footer, where only the reason matters.
+    """
+    seen = set()
+    current = exc
+    while True:
+        nested = current.__cause__ or current.__context__
+        if nested is None or id(nested) in seen:
+            break
+        seen.add(id(nested))
+        current = nested
+    return " ".join(str(current).split())[:200]
 
 
 def _rows_loaded(pipeline) -> int:
