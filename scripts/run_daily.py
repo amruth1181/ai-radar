@@ -116,8 +116,8 @@ def main() -> int:
     log.info("starting daily run (target=%s)", target)
 
     try:
-        if target == "dev":
-            init()
+        # Both targets need the Python-owned tables; BigQuery no less than DuckDB.
+        init()
 
         failed_sources = [] if args.skip_ingest else step_ingest()
 
