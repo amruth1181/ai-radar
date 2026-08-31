@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}AI Radar — {{ day.label }}{% endblock %}
+{% block heading %}{{ day.label }}{% endblock %}
+
+{% block content %}
+<div class="day-head">
+  <h2>{{ day.items | length }} item{{ '' if day.items | length == 1 else 's' }}</h2>
+  <span class="count">{{ day.categories | join(' · ') | replace('_', ' ') }}</span>
+</div>
+{% with items = day.items %}{% include "_items.html" %}{% endwith %}
+
+<nav class="pager">
+  <span>{% if older %}<a href="{{ older.slug }}.html">&larr; {{ older.short }}</a>{% endif %}</span>
+  <span>{% if newer %}<a href="{{ newer.slug }}.html">{{ newer.short }} &rarr;</a>{% endif %}</span>
+</nav>
+{% endblock %}

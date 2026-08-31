@@ -47,6 +47,7 @@ dependencies = [
     { name = "feedparser" },
     { name = "google-cloud-bigquery-storage" },
     { name = "httpx" },
+    { name = "jinja2" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
 ]
@@ -66,6 +67,7 @@ requires-dist = [
     { name = "feedparser", specifier = ">=6.0.14" },
     { name = "google-cloud-bigquery-storage", specifier = ">=2.41.0" },
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "jinja2", specifier = ">=3.1.6" },
     { name = "python-dotenv", specifier = ">=1.2.3" },
     { name = "pyyaml", specifier = ">=6.0.3" },
 ]

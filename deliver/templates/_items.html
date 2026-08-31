@@ -1,0 +1,18 @@
+<ul class="items">
+  {% for item in items %}
+  <li class="item" data-cat="{{ item.category }}">
+    <span class="cat">{{ item.category.replace('_', ' ') }}</span>
+    <a class="title" href="{{ item.url }}">{{ item.title }}</a>
+    {% if item.summary %}
+    <p class="summary">{{ item.summary }}</p>
+    {% endif %}
+    <div class="meta">
+      <span>{{ item.seen_in.replace(',', ' + ') }}</span>
+      <span class="score">score {{ item.relevance_score }}/10</span>
+      {% if item.discussion_url and item.discussion_url != item.url %}
+      <a href="{{ item.discussion_url }}">discussion</a>
+      {% endif %}
+    </div>
+  </li>
+  {% endfor %}
+</ul>

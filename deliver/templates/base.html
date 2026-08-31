@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}AI Radar{% endblock %}</title>
+<meta name="description" content="A daily AI-news digest, ranked against one reader's interests. Built as a data pipeline: dlt, dbt, BigQuery, an LLM triage step, and GitHub Actions.">
+<style>
+  /* Everything inline. The published page carries no credentials, no analytics and
+     no external requests -- open it with networking off and it renders completely. */
+  :root {
+    --ground: #fbfbfa;
+    --surface: #fff;
+    --ink: #14171a;
+    --ink-soft: #4d5560;
+    --ink-faint: #7c8794;
+    --rule: #e3e5e8;
+    --accent: #1f6f5c;
+    --model_release: #c2410c;
+    --research: #1d4ed8;
+    --tooling: #15803d;
+    --industry: #6b7280;
+    --policy: #7e22ce;
+    --tutorial: #0e7490;
+    --other: #52525b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #0f1113;
+      --surface: #16191c;
+      --ink: #e9ecef;
+      --ink-soft: #a7b0ba;
+      --ink-faint: #79838e;
+      --rule: #272b30;
+      --accent: #4db69a;
+      --model_release: #fb923c;
+      --research: #7ea6f0;
+      --tooling: #4ade80;
+      --industry: #9ca3af;
+      --policy: #c084fc;
+      --tutorial: #38bdf8;
+      --other: #a1a1aa;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 46rem; margin: 0 auto; padding: 2.5rem 1.25rem 5rem; }
+  a { color: inherit; }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+  h1 { font-size: 1.75rem; line-height: 1.15; letter-spacing: -.02em; margin: 0 0 .35rem; text-wrap: balance; }
+  h2 { font-size: 1.1rem; letter-spacing: -.01em; margin: 0; }
+  p { margin: 0; }
+
+  header { border-bottom: 1px solid var(--rule); padding-bottom: 1.5rem; margin-bottom: 2rem; }
+  header .tag { font-size: .75rem; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
+  header .blurb { color: var(--ink-soft); margin-top: .6rem; max-width: 40rem; }
+  header nav { margin-top: 1rem; font-size: .875rem; }
+  header nav a { color: var(--accent); text-decoration: none; font-weight: 500; }
+  header nav a:hover { text-decoration: underline; }
+
+  .day-head { display: flex; align-items: baseline; gap: .75rem; flex-wrap: wrap; margin-bottom: 1.25rem; }
+  .day-head .count { font-size: .8125rem; color: var(--ink-faint); margin-left: auto; font-variant-numeric: tabular-nums; }
+
+  .items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1.5rem; }
+  .item { border-left: 3px solid var(--cat, var(--other)); padding-left: 1rem; }
+  .item .cat {
+    font-size: .6875rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--cat, var(--other));
+  }
+  .item .title { display: block; font-size: 1.0625rem; font-weight: 600; line-height: 1.35; margin: .15rem 0 .3rem; text-decoration: none; }
+  .item .title:hover { text-decoration: underline; text-decoration-color: var(--cat, var(--other)); }
+  .item .summary { color: var(--ink-soft); font-size: .9375rem; }
+  .item .meta { margin-top: .4rem; font-size: .8125rem; color: var(--ink-faint); display: flex; flex-wrap: wrap; gap: .4rem .75rem; }
+  .item .meta .score { font-variant-numeric: tabular-nums; }
+  .item .meta a { color: var(--ink-faint); }
+
+  .item[data-cat="model_release"] { --cat: var(--model_release); }
+  .item[data-cat="research"]      { --cat: var(--research); }
+  .item[data-cat="tooling"]       { --cat: var(--tooling); }
+  .item[data-cat="industry"]      { --cat: var(--industry); }
+  .item[data-cat="policy"]        { --cat: var(--policy); }
+  .item[data-cat="tutorial"]      { --cat: var(--tutorial); }
+
+  .archive { margin-top: 3rem; border-top: 1px solid var(--rule); padding-top: 1.5rem; }
+  .archive h2 { margin-bottom: .75rem; }
+  .archive ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+  .archive li { border-bottom: 1px solid var(--rule); }
+  .archive a { display: flex; gap: .75rem; align-items: baseline; padding: .6rem 0; text-decoration: none; }
+  .archive a:hover .date { color: var(--accent); }
+  .archive .date { font-weight: 500; font-size: .9375rem; }
+  .archive .n { font-size: .8125rem; color: var(--ink-faint); margin-left: auto; font-variant-numeric: tabular-nums; }
+  .archive .peek { font-size: .8125rem; color: var(--ink-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .pager { display: flex; justify-content: space-between; gap: 1rem; margin-top: 2.5rem; padding-top: 1.25rem; border-top: 1px solid var(--rule); font-size: .875rem; }
+  .pager a { color: var(--accent); text-decoration: none; font-weight: 500; }
+  .pager a:hover { text-decoration: underline; }
+
+  .empty { background: var(--surface); border: 1px solid var(--rule); border-radius: 4px; padding: 1.5rem; color: var(--ink-soft); }
+
+  footer { margin-top: 3.5rem; padding-top: 1.25rem; border-top: 1px solid var(--rule); font-size: .8125rem; color: var(--ink-faint); display: flex; flex-direction: column; gap: .4rem; }
+  footer a { color: var(--ink-faint); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="tag">AI Radar</div>
+    <h1>{% block heading %}A daily AI digest, ranked for one reader{% endblock %}</h1>
+    <p class="blurb">
+      About 200 AI items surface across 14 sources every day. This picks ten.
+      Each is scored 0&ndash;10 against a written interest profile by an LLM, weighted by
+      source trust and independent corroboration, then decayed by age &mdash; and capped
+      so one hot topic cannot take the whole digest.
+    </p>
+    <nav>
+      <a href="./">Latest</a> &nbsp;·&nbsp; <a href="{{ repo_url }}">Source on GitHub</a>
+    </nav>
+  </header>
+
+  {% block content %}{% endblock %}
+
+  <footer>
+    <span>Built {{ built_at.strftime('%d %b %Y, %H:%M') }} UTC by a GitHub Actions job that runs at 05:00 daily.</span>
+    <span>{{ total_items }} items across {{ total_days }} digest{{ '' if total_days == 1 else 's' }} &middot; dlt &rarr; BigQuery &rarr; dbt &rarr; LLM triage &rarr; Discord.</span>
+    <span><a href="{{ repo_url }}">github.com/amruth1181/ai-radar</a></span>
+  </footer>
+</div>
+</body>
+</html>
