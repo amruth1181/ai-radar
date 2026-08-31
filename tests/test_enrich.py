@@ -196,3 +196,43 @@ class TestFailureAccounting:
         from enrich.backends.base import EnrichmentResult
 
         assert EnrichmentResult().malformed_rate == 0.0
+
+
+class TestAuthFailureIsFatal:
+    """A rejected credential must stop the run, not degrade quietly.
+
+    Found in production: the GLM key was set to a junk value and the daily workflow
+    went green with a full 10-item digest. The digest is assembled from items enriched
+    on PREVIOUS runs, so a dead key looks completely normal -- nothing new is scored,
+    and it stays invisible until the last enriched item ages out of the 26-hour window
+    days later.
+    """
+
+    def test_auth_error_is_not_a_generic_runtime_error_to_callers(self):
+        from enrich.backends.base import EnrichmentAuthError
+
+        # Subclasses RuntimeError so existing handlers still catch it, but callers can
+        # single it out for different treatment.
+        assert issubclass(EnrichmentAuthError, RuntimeError)
+
+    def test_orchestrator_converts_it_to_a_hard_stop(self, monkeypatch):
+        import scripts.run_daily as run_daily
+        from enrich.backends.base import EnrichmentAuthError
+
+        monkeypatch.setattr(
+            "enrich.run.enrich_pending",
+            lambda *a, **k: (_ for _ in ()).throw(EnrichmentAuthError("bad key")),
+        )
+        with pytest.raises(run_daily.StepFailed):
+            run_daily.step_enrich()
+
+    def test_other_failures_do_not_stop_the_run(self, monkeypatch):
+        """Malformed JSON and rate limits stay soft: a partial digest still ships."""
+        import scripts.run_daily as run_daily
+        from enrich.backends.base import EnrichmentResult
+
+        monkeypatch.setattr(
+            "enrich.run.enrich_pending",
+            lambda *a, **k: EnrichmentResult(attempted=5, malformed=2, rate_limited=1),
+        )
+        assert run_daily.step_enrich() == 3

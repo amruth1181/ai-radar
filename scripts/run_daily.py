@@ -66,12 +66,26 @@ def step_ingest() -> list[tuple[str, str]]:
 
 
 def step_enrich() -> int:
-    """Score what is unscored. Returns how many items could not be scored."""
+    """Score what is unscored. Returns how many items could not be scored.
+
+    Partial failure is tolerated and reported in the footer -- a few malformed
+    responses are not a reason to send nothing.
+
+    A rejected API key is different and stops the run. The digest is assembled from
+    items enriched on previous runs, so a dead key yields a completely normal-looking
+    digest while nothing new is ever scored; it stays invisible until the last enriched
+    item ages out of the window, days later. Failing loudly is the only way that gets
+    noticed.
+    """
+    from enrich.backends.base import EnrichmentAuthError
     from enrich.run import enrich_pending
     from warehouse import get_warehouse
 
     with get_warehouse() as wh:
-        result = enrich_pending(wh)
+        try:
+            result = enrich_pending(wh)
+        except EnrichmentAuthError as exc:
+            raise StepFailed(str(exc)) from exc
         log.info("enrich: %s", result.summary())
         return result.failed
 

@@ -18,7 +18,12 @@ import time
 import anthropic
 
 import settings
-from enrich.backends.base import EnrichmentBackend, EnrichmentResult, first_text_block
+from enrich.backends.base import (
+    EnrichmentAuthError,
+    EnrichmentBackend,
+    EnrichmentResult,
+    first_text_block,
+)
 from enrich.prompts import build_user, parse_response
 
 log = logging.getLogger(__name__)
@@ -48,7 +53,8 @@ class ClaudeBackend(EnrichmentBackend):
         if not items:
             return result
 
-        batch = self._client.messages.batches.create(
+        try:
+            batch = self._client.messages.batches.create(
             requests=[
                 {
                     # url_hash as custom_id is what makes results joinable without
@@ -65,7 +71,11 @@ class ClaudeBackend(EnrichmentBackend):
                 }
                 for item in items
             ]
-        )
+            )
+        except (anthropic.AuthenticationError, anthropic.PermissionDeniedError) as exc:
+            raise EnrichmentAuthError(
+                f"Anthropic rejected the API key: {str(exc)[:120]}"
+            ) from exc
         log.info("submitted batch %s with %d requests", batch.id, len(items))
 
         if not self._wait(batch.id):

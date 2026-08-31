@@ -19,7 +19,12 @@ from concurrent.futures import ThreadPoolExecutor
 import anthropic
 
 import settings
-from enrich.backends.base import EnrichmentBackend, EnrichmentResult, first_text_block
+from enrich.backends.base import (
+    EnrichmentAuthError,
+    EnrichmentBackend,
+    EnrichmentResult,
+    first_text_block,
+)
 from enrich.prompts import build_user, parse_response
 
 log = logging.getLogger(__name__)
@@ -64,6 +69,12 @@ class GLMBackend(EnrichmentBackend):
                     # and 3 without. It also crowds max_tokens and truncates the JSON.
                     thinking={"type": "disabled"},
                 )
+            except (anthropic.AuthenticationError, anthropic.PermissionDeniedError) as exc:
+                # No point retrying, and no point attempting the other 60 items: they
+                # will all fail identically. Abort the whole step instead.
+                raise EnrichmentAuthError(
+                    f"GLM rejected the API key: {str(exc)[:120]}"
+                ) from exc
             except anthropic.RateLimitError:
                 if attempt == MAX_RETRIES - 1:
                     log.warning("glm rate limited for %s, giving up", item["url_hash"])

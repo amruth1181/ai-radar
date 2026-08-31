@@ -13,6 +13,22 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 
+class EnrichmentAuthError(RuntimeError):
+    """The provider rejected our credentials.
+
+    Kept apart from every other failure because it behaves differently: a malformed
+    response or a rate limit is transient and worth tolerating, but a bad key fails
+    identically every day until someone changes it.
+
+    It is also the most dangerous failure this pipeline has. The digest is assembled
+    from items enriched on PREVIOUS runs, so a dead key produces a completely
+    normal-looking digest -- ten items, right scores, nothing obviously wrong -- while
+    silently ingesting nothing new. It only becomes visible days later when the last
+    enriched item ages out of the 26-hour window. Verified in production: the key was
+    set to a junk value and the run went green with a full digest.
+    """
+
+
 def first_text_block(message) -> str:
     """Return the first text block's content, or "" if there is none.
 
