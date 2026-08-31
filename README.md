@@ -183,11 +183,18 @@ an 11 would fail `accepted_range` and take the whole build with it.
 
 | Component | What it does |
 |---|---|
-| `scripts/run_daily.py` | Orchestrates the six steps in order and stops hard if the duplicate test fails. |
-| `deliver/digest.py` | `build_digest()` — queries the digest table once and returns structured items. Every channel consumes this; no channel writes its own SQL. |
+| `scripts/run_daily.py` | Orchestrates the six steps and stops hard if the duplicate test fails. |
+| `deliver/digest.py` | `build_digest()` — queries the digest once and returns structured items. Every channel consumes this; no channel writes its own SQL. |
+| `warehouse.py` | One interface over DuckDB and BigQuery, so Python takes the same code path in CI as locally. |
 | `raw.sent_items` | Ledger of every delivered item, excluded from future digests. |
-| BigQuery target | Partitioned on `DATE(published_at)`, clustered on `source_name`. |
-| `.github/workflows/daily.yml` | Cron at 05:00 UTC, `workflow_dispatch` for testing, Telegram alert on failure. |
+| `.github/workflows/daily.yml` | Cron at 05:00 UTC, `workflow_dispatch` for testing, Discord alert on failure. |
+| `.github/workflows/ci.yml` | Builds the entire warehouse from empty DuckDB on every push — no network, no API spend. |
+
+**Why BigQuery is not optional.** The Actions runner is destroyed after every run, so a
+DuckDB file on its disk would vanish and each day would start from an empty warehouse:
+refetching everything and resending yesterday's digest. dlt stores its incremental cursor
+*in the destination* (`_dlt_pipeline_state`), so a fresh runner reads the bookmark from
+BigQuery and resumes exactly where the last run stopped.
 
 The run sequence:
 
@@ -269,14 +276,35 @@ of the internet did yesterday. A real run returned **9 of 12 items about one mod
 release, all from one subreddit**: individually well-scored, collectively useless,
 because reading item 9 taught you nothing item 1 had not.
 
-So the top-N cut is preceded by two caps, applied in order: at most
-`digest_max_per_source` (3) items from any one source, then at most
-`digest_max_per_category` (4) from any one category. Source first, because
-near-duplicate posts about one hot topic overwhelmingly arrive through a single source.
+So the top-N cut is preceded by three caps, applied **in sequence**:
 
-The order matters and was a bug once: ranking both at the same time let an item the
-source cap was about to discard still consume a category slot, which pushed out the only
-GitHub item of the day.
+| Cap | Default | The failure it prevents |
+|---|---|---|
+| `digest_max_per_source` | 3 | One noisy feed dominating |
+| `digest_max_per_topic` | 2 | One hot subject dominating, even across sources |
+| `digest_max_per_category` | 4 | A busy arXiv day burying every tooling item |
+
+The source cap alone was not enough. It cut the Qwen block from 9 items to 3, but 3 of
+the 5 delivered items were still the same model release. `topic_key` normalises
+`Qwen`, `Qwen3.8-27B` and `Qwen3.8-Flash-Next` to one key by taking the leading
+alphabetic run of the first entity — exact matching could not group those, which is why
+entity clustering looked useless at first glance.
+
+**Order matters, and getting it wrong was a real bug.** Ranking the caps together let an
+item a later cap would discard still consume an earlier cap's slot: a fourth Reddit
+tooling post held the last tooling slot and pushed out the only GitHub item of the day.
+
+**Tier-1 backfill.** On a thin day the tight caps can leave four items from a pool of
+seventeen. Rather than ship four, the digest tops up from what the caps excluded, still
+under a looser topic ceiling. Diversity is a preference, not an absolute — someone who
+wanted four items would not have asked for ten. Every tier-0 item outranks every
+backfilled one regardless of score.
+
+All of it is dbt vars, so calibration needs no SQL edit:
+
+```bash
+uv run dbt build --profiles-dir . --vars '{digest_max_per_topic: 1}'
+```
 
 | Factor | Range | Purpose |
 |---|---|---|
@@ -419,6 +447,15 @@ uv run python -m ingest.pipeline   # should add ~0 rows
   neither — and ranking by the day's top posts is a better filter than the upvote
   threshold the API would have given. It rate-limits hard, so fetch it once a day and
   send a descriptive User-Agent.
+- **dlt keys its local state by pipeline name, not by destination.** Sharing one name
+  across dev and prod meant a local DuckDB run's cursor was reused for BigQuery: dlt
+  concluded it had already fetched everything and loaded a single row. A fresh CI runner
+  has no local state and would never hit this, which is exactly why it was worth fixing —
+  it misleads only during local testing, when you are deciding whether prod works.
+- **Dialect splits Python can hit too.** `cast(x as varchar)` is valid DuckDB and a 400
+  on BigQuery; `SELECT * EXCLUDE` is DuckDB where BigQuery wants `EXCEPT`; `r'...'` is a
+  BigQuery raw string that DuckDB reads as a type name. `text_type` and `hours_ago()`
+  live on the `Warehouse` class and the models use `QUALIFY`, which both engines accept.
 - **Naive datetimes silently break the dlt cursor.** `_parse_date` always returns tz-aware
   UTC, using `timegm` rather than `mktime`, because feedparser's `*_parsed` struct_times are
   already UTC.
