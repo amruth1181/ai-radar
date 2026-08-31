@@ -45,7 +45,7 @@ Output exactly this JSON, no markdown fences, no preamble:
 {{
   "summary": "<2 sentences, concrete, no hype words, no 'revolutionary'>",
   "category": "<{categories}>",
-  "entities": ["<org/model/library names, max 5>"],
+  "entities": ["<PRIMARY SUBJECT FIRST, then other org/model/library names, max 5>"],
   "relevance_score": <0-10 integer>,
   "reason": "<max 12 words on why this score>"
 }}"""

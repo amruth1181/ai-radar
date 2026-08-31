@@ -31,6 +31,9 @@ select
     -- Hours old, used by the decay term below.
     {{ dbt.datediff('published_at', dbt.current_timestamp(), 'hour') }} as age_hours,
 
+    -- Coarse subject, used to stop one hot topic filling the digest.
+    {{ topic_key('entities', 'url_hash') }} as topic_key,
+
     round(
         -- The LLM's judgement against the profile is the main signal. Unenriched
         -- items score 0 rather than null, so they sort last instead of vanishing.

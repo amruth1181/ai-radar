@@ -1,6 +1,6 @@
 {{ config(materialized='table') }}
 
--- Today's digest: the handful of items actually worth reading.
+-- Today's digest: the items actually worth reading.
 --
 -- 26 hours rather than 24, so a late or skipped run does not drop items into a gap.
 -- The sent_items ledger is what stops that overlap resending yesterday's top item.
@@ -19,51 +19,72 @@ with eligible as (
 
 ),
 
--- Diversity caps.
+-- Tier 0: the diverse core.
 --
 -- Pure top-N by score does not produce a digest, it produces whatever the loudest
 -- corner of the internet did yesterday. A real run returned 9 of 12 items about one
--- model release, all from one subreddit -- individually well-scored, collectively
--- useless, because reading item 9 taught you nothing item 1 had not.
+-- model release, all from one subreddit.
 --
--- Capping per source is what actually fixes that case: near-duplicate posts about one
--- hot topic overwhelmingly arrive through a single source. Capping per category
--- handles the other shape, a busy arXiv day burying every tooling item.
+-- Three caps, because the problem has three shapes:
+--   source    one noisy feed dominating
+--   topic     one hot subject dominating, even across sources
+--   category  a busy arXiv day burying every tooling item
 --
--- Entity-based topic clustering was considered and rejected: the LLM emits "Qwen",
--- "Qwen3.8-Next" and "Qwen-3.8 27B" for the same subject, so exact matching does not
--- group them and fuzzy matching is not worth the fragility.
--- The caps are applied in sequence, not together. Ranking both at once lets an item
--- the source cap is about to discard still consume a category slot: on a real run a
--- fourth Reddit tooling post held the last tooling slot and pushed out the only
--- GitHub item, which then failed the category cap despite being alone in its source.
+-- Applied in SEQUENCE, not ranked together. Ranking at once lets an item a later cap
+-- will discard still consume an earlier cap's slot: on real data a fourth Reddit
+-- tooling post held the last tooling slot and pushed out the only GitHub item.
+-- QUALIFY rather than a ranked subquery: it filters on the window function without
+-- projecting a rank column, which would then need removing. DuckDB spells that
+-- removal EXCLUDE and BigQuery spells it EXCEPT, so avoiding it avoids the split.
 source_capped as (
 
-    select *
-    from (
-        select
-            *,
-            row_number() over (
-                partition by source_name order by final_score desc, url_hash
-            ) as rank_in_source
-        from eligible
-    ) ranked_by_source
-    where rank_in_source <= {{ var('digest_max_per_source', 3) }}
+    select * from eligible
+    qualify row_number() over (
+        partition by source_name order by final_score desc, url_hash
+    ) <= {{ var('digest_max_per_source', 3) }}
 
 ),
 
-diverse as (
+topic_capped as (
 
-    select *
-    from (
-        select
-            *,
-            row_number() over (
-                partition by category order by final_score desc, url_hash
-            ) as rank_in_category
-        from source_capped
-    ) ranked_by_category
-    where rank_in_category <= {{ var('digest_max_per_category', 4) }}
+    select * from source_capped
+    qualify row_number() over (
+        partition by topic_key order by final_score desc, url_hash
+    ) <= {{ var('digest_max_per_topic', 2) }}
+
+),
+
+core as (
+
+    select * from topic_capped
+    qualify row_number() over (
+        partition by category order by final_score desc, url_hash
+    ) <= {{ var('digest_max_per_category', 4) }}
+
+),
+
+-- Tier 1: backfill.
+--
+-- On a thin day -- a weekend with arXiv closed, say -- the tight caps can leave only
+-- four items from a pool of seventeen. Rather than ship four, top up from what the
+-- caps excluded, still under a looser topic ceiling so the backfill cannot become a
+-- single-subject block. Diversity is a preference here, not an absolute: a reader who
+-- wanted four items would not have asked for ten.
+backfill as (
+
+    select * from eligible
+    where url_hash not in (select url_hash from core)
+    qualify row_number() over (
+        partition by topic_key order by final_score desc, url_hash
+    ) <= {{ var('backfill_max_per_topic', 4) }}
+
+),
+
+combined as (
+
+    select *, 0 as tier from core
+    union all
+    select *, 1 as tier from backfill
 
 )
 
@@ -82,14 +103,16 @@ select
     corroboration,
     max_points,
     max_stars,
+    topic_key,
     relevance_score,
     final_score,
     published_at,
-    age_hours
+    age_hours,
+    tier
 
-from diverse
+from combined
 
--- Deliberately no backfill when the caps leave fewer than digest_size items. A short,
--- varied digest is more useful than a long, repetitive one, and the quiet-day line in
--- the message already explains a small count.
-qualify row_number() over (order by final_score desc) <= {{ var('digest_size', 12) }}
+-- Tier before score: every diverse item outranks every backfilled one, however well
+-- the backfilled item scored.
+qualify row_number() over (order by tier, final_score desc, url_hash)
+        <= {{ var('digest_size', 10) }}

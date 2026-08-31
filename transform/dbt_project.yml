@@ -24,9 +24,14 @@ vars:
   # Minimum LLM relevance score to be eligible at all.
   digest_min_score: 5
   # Hard ceiling on items delivered. Sized to one Discord message.
-  digest_size: 12
+  digest_size: 10
   # Diversity caps, applied in that order before the top-N cut. Without them a single
   # busy source or category takes the whole digest -- a real run produced 9 of 12
   # items about one model release, all from one subreddit.
   digest_max_per_source: 3
+  # Normalised subject: 'Qwen3.8-Flash-Next' and 'Qwen' are one topic.
+  digest_max_per_topic: 2
   digest_max_per_category: 4
+  # Looser ceiling for tier-1 backfill, used only when the tight caps leave the
+  # digest short of digest_size.
+  backfill_max_per_topic: 2
