@@ -1,0 +1,3 @@
+# Ensure dbt models and macros are recognized as SQL
+transform/**/*.sql linguist-detectable=true
+transform/**/*.sql linguist-language=SQL
