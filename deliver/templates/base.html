@@ -60,11 +60,32 @@
   header { border-bottom: 1px solid var(--rule); padding-bottom: 1.5rem; margin-bottom: 2rem; }
   header .tag { font-size: .75rem; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
   header .blurb { color: var(--ink-soft); margin-top: .6rem; max-width: 40rem; }
-  header nav { margin-top: 1rem; font-size: .875rem; }
+  header .how { margin-top: .9rem; color: var(--ink-soft); font-size: .9375rem; max-width: 40rem; }
+
+  /* The pipeline as a chain, because the order is the point: dedupe happens before
+     the LLM sees anything, which is what keeps the cost near zero. */
+  .stack { margin-top: 1.1rem; display: flex; flex-wrap: wrap; gap: .4rem .25rem; align-items: stretch; }
+  .stage {
+    display: flex; flex-direction: column; gap: .1rem;
+    padding: .4rem .6rem;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    min-width: 5.5rem;
+  }
+  .stage .step { font-size: .625rem; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
+  .stage .tool { font-size: .8125rem; font-weight: 600; color: var(--ink); }
+  .arrow { align-self: center; color: var(--ink-faint); font-size: .75rem; padding: 0 .1rem; }
+  @media (max-width: 30rem) { .arrow { display: none; } .stage { flex: 1 1 6.5rem; } }
+
+  header nav { margin-top: 1.1rem; font-size: .875rem; }
   header nav a { color: var(--accent); text-decoration: none; font-weight: 500; }
   header nav a:hover { text-decoration: underline; }
 
+  .day-section + .day-section { margin-top: 3rem; padding-top: 2rem; border-top: 1px solid var(--rule); }
   .day-head { display: flex; align-items: baseline; gap: .75rem; flex-wrap: wrap; margin-bottom: 1.25rem; }
+  .day-head a { text-decoration: none; color: inherit; }
+  .day-head a:hover { color: var(--accent); }
   .day-head .count { font-size: .8125rem; color: var(--ink-faint); margin-left: auto; font-variant-numeric: tabular-nums; }
 
   .items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1.5rem; }
@@ -113,11 +134,35 @@
     <div class="tag">AI Radar</div>
     <h1>{% block heading %}A daily AI digest, ranked for one reader{% endblock %}</h1>
     <p class="blurb">
-      About 200 AI items surface across 14 sources every day. This picks ten.
-      Each is scored 0&ndash;10 against a written interest profile by an LLM, weighted by
-      source trust and independent corroboration, then decayed by age &mdash; and capped
-      so one hot topic cannot take the whole digest.
+      About 200 AI items surface across 14 sources every day &mdash; arXiv, lab blogs,
+      Hacker News, GitHub and Reddit. This picks ten and sends them to a chat channel
+      every morning at 05:00&nbsp;UTC. Each section below is one day's digest.
     </p>
+    <p class="how">
+      Items are deduplicated on a canonical URL hash first, so a paper appearing on
+      arXiv, Hacker News and Reddit is one row &mdash; and is scored once rather than
+      three times. An LLM then rates each 0&ndash;10 against a written interest profile.
+      The ranking weights that score by source trust and independent corroboration,
+      decays it by age, and caps how many items any one source, topic or category can
+      take, so a single busy subject cannot fill the digest.
+    </p>
+
+    <div class="stack">
+      <div class="stage"><span class="step">Ingest</span><span class="tool">dlt</span></div>
+      <span class="arrow">&rarr;</span>
+      <div class="stage"><span class="step">Store</span><span class="tool">BigQuery</span></div>
+      <span class="arrow">&rarr;</span>
+      <div class="stage"><span class="step">Dedupe</span><span class="tool">dbt</span></div>
+      <span class="arrow">&rarr;</span>
+      <div class="stage"><span class="step">Triage</span><span class="tool">GLM&nbsp;4.5</span></div>
+      <span class="arrow">&rarr;</span>
+      <div class="stage"><span class="step">Rank</span><span class="tool">dbt</span></div>
+      <span class="arrow">&rarr;</span>
+      <div class="stage"><span class="step">Deliver</span><span class="tool">Discord</span></div>
+      <span class="arrow">&rarr;</span>
+      <div class="stage"><span class="step">Schedule</span><span class="tool">Actions</span></div>
+    </div>
+
     <nav>
       <a href="./">Latest</a> &nbsp;·&nbsp; <a href="{{ repo_url }}">Source on GitHub</a>
     </nav>
@@ -126,8 +171,8 @@
   {% block content %}{% endblock %}
 
   <footer>
-    <span>Built {{ built_at.strftime('%d %b %Y, %H:%M') }} UTC by a GitHub Actions job that runs at 05:00 daily.</span>
-    <span>{{ total_items }} items across {{ total_days }} digest{{ '' if total_days == 1 else 's' }} &middot; dlt &rarr; BigQuery &rarr; dbt &rarr; LLM triage &rarr; Discord.</span>
+    <span>{{ total_items }} item{{ '' if total_items == 1 else 's' }} across {{ total_days }} digest{{ '' if total_days == 1 else 's' }}. Rebuilt {{ built_at.strftime('%d %b %Y, %H:%M') }} UTC.</span>
+    <span>Python, dlt, dbt, DuckDB locally and BigQuery in production, GLM&nbsp;4.5&nbsp;Flash for triage, GitHub Actions for scheduling. No server.</span>
     <span><a href="{{ repo_url }}">github.com/amruth1181/ai-radar</a></span>
   </footer>
 </div>

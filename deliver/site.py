@@ -32,6 +32,11 @@ DEFAULT_OUT = settings.REPO_ROOT / "site"
 
 REPO_URL = "https://github.com/amruth1181/ai-radar"
 
+# Days rendered in full on the index, so recent digests can be scrolled rather than
+# clicked through. Older days stay one click away — inlining a year of history would
+# make the front page megabytes.
+INLINE_DAYS = 5
+
 # One row per item per day it was delivered. A single item sent to two channels on the
 # same day is one archive entry, hence the group by rather than a plain select.
 ARCHIVE_SQL = """
@@ -142,6 +147,7 @@ def render(days: list[Day], out_dir: Path) -> list[Path]:
         "built_at": datetime.now(timezone.utc),
         "total_items": sum(len(d.items) for d in days),
         "total_days": len(days),
+        "inline_days": INLINE_DAYS,
     }
 
     written = []
@@ -149,7 +155,7 @@ def render(days: list[Day], out_dir: Path) -> list[Path]:
     index = out_dir / "index.html"
     index.write_text(
         env.get_template("index.html").render(
-            days=days, latest=days[0] if days else None, **context
+            days=days, **context
         )
     )
     written.append(index)

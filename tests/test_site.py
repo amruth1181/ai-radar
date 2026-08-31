@@ -10,7 +10,7 @@ from datetime import date
 
 import pytest
 
-from deliver.site import Day, Item, render
+from deliver.site import INLINE_DAYS, Day, Item, render
 
 
 def item(title="A Real Article Title", category="tooling", score=8, **kw):
@@ -54,10 +54,24 @@ class TestStructure:
         assert "31 August 2026" in html
         assert "A Real Article Title" in html
 
-    def test_older_days_are_linked_not_inlined(self, site):
+    def test_recent_days_are_inlined_so_they_can_be_scrolled(self, site):
+        """Clicking through to read yesterday is friction; a few days inline is not."""
         html = (site / "index.html").read_text()
-        assert "2026-08-30.html" in html
-        assert "Older" not in html
+        assert "A Real Article Title" in html   # newest
+        assert "Older" in html                  # second day, also inline
+
+    def test_days_beyond_the_inline_window_are_linked_only(self, tmp_path):
+        """A year of history inlined would make the front page megabytes."""
+        out = tmp_path / "site"
+        days = [
+            Day(day=date(2026, 8, 31 - n), items=[item(title=f"Day {n} headline")])
+            for n in range(INLINE_DAYS + 2)
+        ]
+        render(days, out)
+        html = (out / "index.html").read_text()
+        assert f"Day {INLINE_DAYS - 1} headline" in html      # last inline day
+        assert f"Day {INLINE_DAYS} headline" not in html      # first linked-only day
+        assert days[INLINE_DAYS].slug + ".html" in html       # but its link is there
 
     def test_day_pages_link_to_neighbours(self, site):
         newest = (site / "2026-08-31.html").read_text()

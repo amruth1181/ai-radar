@@ -2,18 +2,22 @@
 {% block title %}AI Radar{% endblock %}
 
 {% block content %}
-{% if latest %}
-  <div class="day-head">
-    <h2>{{ latest.label }}</h2>
-    <span class="count">{{ latest.items | length }} item{{ '' if latest.items | length == 1 else 's' }}</span>
-  </div>
-  {% with items = latest.items %}{% include "_items.html" %}{% endwith %}
+{% if days %}
+  {% for day in days[:inline_days] %}
+  <section class="day-section">
+    <div class="day-head">
+      <h2><a href="{{ day.slug }}.html">{{ day.label }}</a></h2>
+      <span class="count">{{ day.items | length }} item{{ '' if day.items | length == 1 else 's' }}</span>
+    </div>
+    {% with items = day.items %}{% include "_items.html" %}{% endwith %}
+  </section>
+  {% endfor %}
 
-  {% if days | length > 1 %}
+  {% if days | length > inline_days %}
   <section class="archive">
-    <h2>Archive</h2>
+    <h2>Earlier</h2>
     <ul>
-      {% for day in days[1:] %}
+      {% for day in days[inline_days:] %}
       <li>
         <a href="{{ day.slug }}.html">
           <span class="date">{{ day.label }}</span>
