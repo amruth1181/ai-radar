@@ -14,8 +14,9 @@ be rewritten and re-run without touching ingested data.
 from __future__ import annotations
 
 import argparse
-
 import logging
+import re
+from collections import defaultdict
 from pathlib import Path
 
 import yaml
@@ -34,10 +35,35 @@ PROFILE_PATH = settings.REPO_ROOT / "config" / "profile.yaml"
 WINDOW_HOURS = 26
 
 # Hard ceiling on items scored per run. A runaway loop is the only way this project
-# gets expensive, so the cap is in code rather than in a spend alert alone.
-MAX_ITEMS = 80
+# gets expensive, so the cap stays in code rather than relying on a spend alert.
+# ~300 requests against GLM's ~1000/day free tier still leaves 3x headroom.
+MAX_ITEMS = 300
+
+# The budget is spent PER SOURCE, not globally.
+#
+# A global "best-weighted 80" collapses the moment a high-volume source wakes up: on
+# the first weekday, arXiv cs.CL published 156 papers and — sitting at weight 1.0,
+# above every aggregator — consumed the entire budget. cs.LG (210 papers), Hacker
+# News, GitHub and Reddit were scored zero times, and because unscored items age out
+# of the 26-hour window they were not deferred, they were lost.
+#
+# A per-source quota guarantees every source reaches the model, and caps any single
+# one. 14 sources x 20 is 280, comfortably inside MAX_ITEMS.
+PER_SOURCE_QUOTA = 20
+
+# How many rows to pull per source before ranking them locally. Larger than the quota
+# so the keyword pre-filter has something to choose between.
+FETCH_PER_SOURCE = 80
 
 MIN_TITLE_CHARS = 15
+
+# Words too common to signal anything, stripped when deriving keywords from the
+# profile so "data" and "systems" do not match every paper ever written.
+_STOPWORDS = frozenset("""
+and the for with from that this into your role roles more than what when will
+using use used based their there they which while about over under how why
+data systems system model models learning ai llm llms new run running
+""".split())
 
 SELECT_CANDIDATES = """
 select
@@ -50,14 +76,75 @@ from {dedup} i
 left join {enrichments} e on i.url_hash = e.url_hash
 where e.url_hash is null
   and i.published_at >= {cutoff}
-order by i.source_weight desc, i.published_at desc
-limit {limit}
+-- Per source, not globally: a single high-volume source must not be able to
+-- consume the whole budget before another source is reached at all.
+qualify row_number() over (
+    partition by i.source_name order by i.published_at desc
+) <= {per_source}
 """
 
 
 def load_profile(path: Path = PROFILE_PATH) -> dict:
     with open(path) as fh:
         return yaml.safe_load(fh)
+
+
+def profile_keywords(profile_cfg: dict) -> set[str]:
+    """Distinctive terms used to rank items within a source before spending requests.
+
+    Never used to drop an item — a paper the profile does not name can still be worth
+    reading; it just loses a tiebreak when a source has more candidates than quota.
+
+    Read from the explicit `keywords:` list in profile.yaml rather than derived from
+    the prose. Derivation was tried and produced "benchmark", "design", "evaluation",
+    "inference" and "generation" — words in nearly every ML abstract — which ranked an
+    RNA foundation model top of a data-engineering feed. Curation beats extraction
+    when the whole job is discrimination.
+
+    Phrases are matched as substrings, so "vector database" and "kv cache" work.
+    """
+    return {
+        str(term).lower().strip()
+        for term in profile_cfg.get("keywords", [])
+        if str(term).strip()
+    }
+
+
+def keyword_affinity(item: dict, keywords: set[str]) -> int:
+    """How many profile terms this item's title and summary mention."""
+    if not keywords:
+        return 0
+    text = f"{item.get('title') or ''} {item.get('summary_raw') or ''}".lower()
+    return sum(1 for word in keywords if word in text)
+
+
+def apply_quota(
+    items: list[dict],
+    keywords: set[str],
+    quota: int = PER_SOURCE_QUOTA,
+    limit: int = MAX_ITEMS,
+) -> list[dict]:
+    """Take the best `quota` items from each source, then cap the total.
+
+    Ranking inside a source is by profile keyword matches, then recency. That is what
+    turns 156 undifferentiated arXiv papers into the 20 most likely to matter, without
+    discarding anything on a keyword rule alone.
+    """
+    by_source: dict[str, list[dict]] = defaultdict(list)
+    for item in items:
+        by_source[item["source_name"]].append(item)
+
+    kept: list[dict] = []
+    for source_items in by_source.values():
+        source_items.sort(
+            key=lambda i: (keyword_affinity(i, keywords), i.get("published_at") or ""),
+            reverse=True,
+        )
+        kept.extend(source_items[:quota])
+
+    # Newest first once quotas are settled, so a truncated run still scores today.
+    kept.sort(key=lambda i: i.get("published_at") or "", reverse=True)
+    return kept[:limit]
 
 
 def _mostly_ascii(text: str, threshold: float = 0.7) -> bool:
@@ -83,16 +170,16 @@ def prefilter(items: list[dict]) -> tuple[list[dict], list[tuple[str, str]]]:
 
 
 def fetch_candidates(
-    wh: Warehouse, limit: int = MAX_ITEMS, window: int = WINDOW_HOURS
+    wh: Warehouse, window: int = WINDOW_HOURS, per_source: int = FETCH_PER_SOURCE
 ) -> list[dict]:
-    """Unenriched items inside the window, most trusted sources first."""
+    """Unenriched items inside the window, up to `per_source` from each source."""
     return wh.query(
         SELECT_CANDIDATES.format(
             dedup=wh.table("analytics", "int_items_dedup"),
             enrichments=wh.table("raw", "enrichments"),
             cutoff=wh.hours_ago(window),
             text_type=wh.text_type,
-            limit=limit,
+            per_source=per_source,
         )
     )
 
@@ -108,17 +195,22 @@ def enrich_pending(
     """Select, filter, score and persist. Returns the backend's EnrichmentResult."""
     from enrich.backends.base import EnrichmentResult
 
-    candidates = fetch_candidates(wh, limit=limit, window=window)
+    profile = load_profile()
+    candidates = fetch_candidates(wh, window=window)
     kept, dropped = prefilter(candidates)
     for url_hash, reason in dropped:
         log.info("skipped %s: %s", url_hash, reason)
+
+    # Quota AFTER the cheap filters, so a source's allocation is not spent on rows
+    # that were going to be discarded anyway.
+    kept = apply_quota(kept, profile_keywords(profile), limit=limit)
 
     if not kept:
         return EnrichmentResult(attempted=0)
 
     backend = get_backend(backend_name)
     log.info("backend: %s (%s)", backend.name, backend.model)
-    result = backend.enrich(kept, build_system(load_profile()))
+    result = backend.enrich(kept, build_system(profile))
     write_back(wh, result.rows)
 
     if result.malformed_rate > 0.10:
@@ -143,11 +235,18 @@ def main() -> int:
 
     with get_warehouse() as wh:
         if args.dry_run:
-            candidates = fetch_candidates(wh, limit=args.limit, window=args.window)
-            kept, dropped = prefilter(candidates)
-            print(f"{len(candidates)} candidates · {len(kept)} to score · {len(dropped)} filtered")
+            candidates = fetch_candidates(wh, window=args.window)
+            passed, dropped = prefilter(candidates)
+            kept = apply_quota(passed, profile_keywords(load_profile()), limit=args.limit)
+            print(
+                f"{len(candidates)} fetched · {len(dropped)} filtered · "
+                f"{len(kept)} to score (quota {PER_SOURCE_QUOTA}/source)"
+            )
+            counts: dict[str, int] = defaultdict(int)
             for item in kept:
-                print(f"  {item['source_name']:<20} {item['title'][:60]}")
+                counts[item["source_name"]] += 1
+            for source, n in sorted(counts.items(), key=lambda kv: -kv[1]):
+                print(f"  {source:<22} {n:>3}")
             return 0
 
         result = enrich_pending(

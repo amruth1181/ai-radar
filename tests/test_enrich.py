@@ -236,3 +236,132 @@ class TestAuthFailureIsFatal:
             lambda *a, **k: EnrichmentResult(attempted=5, malformed=2, rate_limited=1),
         )
         assert run_daily.step_enrich() == 3
+
+
+class TestKeywords:
+    """Curated, not derived.
+
+    Deriving keywords from the profile prose was tried and failed: it produced
+    "benchmark", "design", "evaluation", "inference" and "generation" — words in
+    nearly every ML abstract — and ranked an RNA foundation model and a
+    voice-anonymisation paper top of a data-engineering feed.
+    """
+
+    def test_reads_the_explicit_keyword_list(self):
+        from enrich.run import profile_keywords
+
+        assert profile_keywords({"keywords": ["dbt", "RAG"]}) == {"dbt", "rag"}
+
+    def test_ignores_prose_and_interests(self):
+        """Only `keywords:` counts — free text is where the noise came from."""
+        from enrich.run import profile_keywords
+
+        cfg = {"profile": "I care about design and evaluation",
+               "high_interest": ["Practical evaluation methodology"],
+               "keywords": ["dbt"]}
+        assert profile_keywords(cfg) == {"dbt"}
+
+    def test_the_real_profile_excludes_generic_academic_words(self):
+        from enrich.run import load_profile, profile_keywords
+
+        kw = profile_keywords(load_profile())
+        for noise in ("design", "evaluation", "benchmark", "generation", "inference"):
+            assert noise not in kw, f"{noise} is in nearly every ML abstract"
+        for signal in ("dbt", "dlt", "rag", "quantization"):
+            assert signal in kw
+
+    def test_short_tool_names_survive(self):
+        """dbt, dlt and RAG are three characters and the most discriminating terms."""
+        from enrich.run import load_profile, profile_keywords
+
+        kw = profile_keywords(load_profile())
+        assert {"dbt", "dlt", "rag"} <= kw
+
+
+class TestAffinity:
+    def setup_method(self):
+        self.kw = {"dbt", "quantization", "vector database", "kv cache"}
+
+    def item(self, title, summary=""):
+        return {"title": title, "summary_raw": summary}
+
+    def test_counts_distinct_matches(self):
+        from enrich.run import keyword_affinity
+
+        assert keyword_affinity(
+            self.item("Quantization for dbt"), self.kw) == 2
+
+    def test_matches_multi_word_phrases(self):
+        from enrich.run import keyword_affinity
+
+        assert keyword_affinity(self.item("Faster KV cache reuse"), self.kw) == 1
+
+    def test_searches_the_summary_too(self):
+        from enrich.run import keyword_affinity
+
+        assert keyword_affinity(self.item("A paper", "uses a vector database"), self.kw) == 1
+
+    def test_irrelevant_item_scores_zero(self):
+        from enrich.run import keyword_affinity
+
+        assert keyword_affinity(self.item("Foraging in ant colonies"), self.kw) == 0
+
+    def test_no_keywords_is_not_a_crash(self):
+        from enrich.run import keyword_affinity
+
+        assert keyword_affinity(self.item("Anything"), set()) == 0
+
+
+class TestQuota:
+    """The fix for the failure that prompted all of this.
+
+    On the first weekday arXiv cs.CL published 156 papers and, at weight 1.0, consumed
+    the entire global budget of 80. cs.LG, Hacker News, GitHub and Reddit were scored
+    zero times — and because unscored items age out of the 26-hour window they were
+    not deferred, they were lost.
+    """
+
+    def item(self, source, title="A sufficiently long title here", published="2026-08-31"):
+        return {"source_name": source, "title": title, "summary_raw": "",
+                "published_at": published, "url_hash": f"{source}-{title}-{published}"}
+
+    def test_one_loud_source_cannot_take_the_whole_budget(self):
+        from enrich.run import apply_quota
+
+        items = ([self.item("arxiv_cs_cl", f"paper {i}") for i in range(200)]
+                 + [self.item("hn_ai", "a hacker news story")]
+                 + [self.item("github_llm_repos", "a repo")])
+        kept = apply_quota(items, set(), quota=20, limit=300)
+        by_source = {}
+        for k in kept:
+            by_source[k["source_name"]] = by_source.get(k["source_name"], 0) + 1
+
+        assert by_source["arxiv_cs_cl"] == 20      # capped
+        assert by_source["hn_ai"] == 1             # and the quiet sources survive
+        assert by_source["github_llm_repos"] == 1
+
+    def test_small_sources_are_not_padded(self):
+        from enrich.run import apply_quota
+
+        kept = apply_quota([self.item("hn_ai", "only one")], set(), quota=20)
+        assert len(kept) == 1
+
+    def test_global_limit_still_applies(self):
+        from enrich.run import apply_quota
+
+        items = [self.item(f"source_{s}", f"t{i}") for s in range(10) for i in range(20)]
+        assert len(apply_quota(items, set(), quota=20, limit=50)) == 50
+
+    def test_keywords_decide_which_items_fill_a_quota(self):
+        from enrich.run import apply_quota
+
+        items = [self.item("arxiv_cs_lg", "Foraging in ant colonies"),
+                 self.item("arxiv_cs_lg", "Quantization for local inference"),
+                 self.item("arxiv_cs_lg", "Landau theory of criticality")]
+        kept = apply_quota(items, {"quantization"}, quota=1)
+        assert kept[0]["title"] == "Quantization for local inference"
+
+    def test_empty_input_is_fine(self):
+        from enrich.run import apply_quota
+
+        assert apply_quota([], {"dbt"}) == []

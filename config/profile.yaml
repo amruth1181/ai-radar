@@ -33,3 +33,74 @@ low_interest:
   - Opinion and think-pieces with no new results
   - Crypto, AI-adjacent hype, and speculation about AGI timelines
   - Prompt-engineering listicles and "top 10 tools" posts
+
+# Terms used to rank items WITHIN a source before any request is spent, when a source
+# has more candidates than its quota. Never used to drop an item outright.
+#
+# These must be *discriminating*. Deriving them automatically from the prose above was
+# tried and failed: it produced "benchmark", "design", "evaluation", "inference",
+# "generation" — words in essentially every ML abstract — and duly ranked an RNA
+# foundation model and a voice-anonymisation paper above everything else.
+#
+# So: tool names, specific techniques, named systems. If a term would appear in a
+# random arXiv abstract, it does not belong here.
+keywords:
+  # Data stack
+  - dlt
+  - dbt
+  - sqlmesh
+  - airflow
+  - dagster
+  - prefect
+  - bigquery
+  - snowflake
+  - databricks
+  - duckdb
+  - iceberg
+  - warehouse
+  - lakehouse
+  - kafka
+  - spark
+  # Retrieval
+  - rag
+  - retrieval-augmented
+  - embedding
+  - embeddings
+  - vector database
+  - pgvector
+  - faiss
+  - qdrant
+  - reranking
+  - chunking
+  # Serving and local inference
+  - quantization
+  - quantized
+  - gguf
+  - vllm
+  - llama.cpp
+  - ollama
+  - kv cache
+  - throughput
+  - tokens per second
+  - on-device
+  - consumer gpu
+  # MLOps
+  - mlops
+  - feature store
+  - model registry
+  - drift
+  - observability
+  - lineage
+  - idempotent
+  - backfill
+  # Evaluation
+  - ragas
+  - llm-as-judge
+  - eval harness
+  - leaderboard
+  - reproducib
+  # Open weights
+  - open-weight
+  - open weights
+  - apache 2.0
+  - model card

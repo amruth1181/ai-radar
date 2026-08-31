@@ -35,7 +35,7 @@ REPO_URL = "https://github.com/amruth1181/ai-radar"
 # Days rendered in full on the index, so recent digests can be scrolled rather than
 # clicked through. Older days stay one click away — inlining a year of history would
 # make the front page megabytes.
-INLINE_DAYS = 5
+INLINE_DAYS = 10
 
 # One row per item per day it was delivered. A single item sent to two channels on the
 # same day is one archive entry, hence the group by rather than a plain select.
