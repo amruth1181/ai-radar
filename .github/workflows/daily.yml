@@ -18,6 +18,9 @@ jobs:
   digest:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      # contents:write is needed to push the rendered archive to the gh-pages branch.
+      contents: write
 
     steps:
       - uses: actions/checkout@v5
@@ -53,6 +56,23 @@ jobs:
           # Raises the GitHub search rate limit from 10 to 30 requests/minute.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: uv run python scripts/run_daily.py
+
+      - name: Render the public archive
+        env:
+          DBT_TARGET: prod
+          BIGQUERY_PROJECT: ${{ secrets.BIGQUERY_PROJECT }}
+          BIGQUERY_LOCATION: US
+        run: uv run python -m deliver.site
+
+      - name: Publish to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+          # The archive is regenerated in full each run, so history on this branch
+          # would be 300 copies of the same pages within a year.
+          force_orphan: true
+          commit_message: "archive: ${{ github.run_id }}"
 
       - name: Alert on failure
         if: failure()
