@@ -62,21 +62,22 @@
   header .blurb { color: var(--ink-soft); margin-top: .6rem; max-width: 40rem; }
   header .how { margin-top: .9rem; color: var(--ink-soft); font-size: .9375rem; max-width: 40rem; }
 
-  /* The pipeline as a chain, because the order is the point: dedupe happens before
-     the LLM sees anything, which is what keeps the cost near zero. */
-  .stack { margin-top: 1.1rem; display: flex; flex-wrap: wrap; gap: .4rem .25rem; align-items: stretch; }
-  .stage {
-    display: flex; flex-direction: column; gap: .1rem;
-    padding: .4rem .6rem;
-    background: var(--surface);
-    border: 1px solid var(--rule);
-    border-radius: 3px;
-    min-width: 5.5rem;
+  /* Numbered because it genuinely is a sequence, and the order carries the argument:
+     deduplication happens BEFORE the model sees anything, so a paper on arXiv, Hacker
+     News and Reddit is scored once rather than three times. That ordering is what
+     keeps the running cost at zero. */
+  .pipeline { margin-top: 1.25rem; display: flex; flex-direction: column; border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; background: var(--surface); }
+  .pstep { display: grid; grid-template-columns: 2rem 7.5rem 1fr; gap: .75rem; align-items: baseline; padding: .55rem .85rem; border-bottom: 1px solid var(--rule); }
+  .pstep:last-child { border-bottom: none; }
+  .pstep .n { font-size: .6875rem; font-weight: 600; color: var(--ink-faint); font-variant-numeric: tabular-nums; letter-spacing: .04em; }
+  .pstep .act { display: flex; flex-direction: column; gap: .05rem; }
+  .pstep .verb { font-size: .8125rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+  .pstep .tool { font-size: .75rem; color: var(--accent); font-weight: 600; }
+  .pstep .detail { font-size: .8125rem; color: var(--ink-soft); line-height: 1.5; }
+  @media (max-width: 34rem) {
+    .pstep { grid-template-columns: 1.6rem 1fr; row-gap: .2rem; }
+    .pstep .detail { grid-column: 2; }
   }
-  .stage .step { font-size: .625rem; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
-  .stage .tool { font-size: .8125rem; font-weight: 600; color: var(--ink); }
-  .arrow { align-self: center; color: var(--ink-faint); font-size: .75rem; padding: 0 .1rem; }
-  @media (max-width: 30rem) { .arrow { display: none; } .stage { flex: 1 1 6.5rem; } }
 
   header nav { margin-top: 1.1rem; font-size: .875rem; }
   header nav a { color: var(--accent); text-decoration: none; font-weight: 500; }
@@ -147,20 +148,17 @@
       take, so a single busy subject cannot fill the digest.
     </p>
 
-    <div class="stack">
-      <div class="stage"><span class="step">Ingest</span><span class="tool">dlt</span></div>
-      <span class="arrow">&rarr;</span>
-      <div class="stage"><span class="step">Store</span><span class="tool">BigQuery</span></div>
-      <span class="arrow">&rarr;</span>
-      <div class="stage"><span class="step">Dedupe</span><span class="tool">dbt</span></div>
-      <span class="arrow">&rarr;</span>
-      <div class="stage"><span class="step">Triage</span><span class="tool">GLM&nbsp;4.5</span></div>
-      <span class="arrow">&rarr;</span>
-      <div class="stage"><span class="step">Rank</span><span class="tool">dbt</span></div>
-      <span class="arrow">&rarr;</span>
-      <div class="stage"><span class="step">Deliver</span><span class="tool">Discord</span></div>
-      <span class="arrow">&rarr;</span>
-      <div class="stage"><span class="step">Schedule</span><span class="tool">Actions</span></div>
+    <div class="pipeline">
+      <div class="pstep"><span class="n">01</span><span class="act"><span class="verb">Fetch</span><span class="tool">dlt</span></span><span class="detail">14 sources on incremental cursors, each isolated so one dead feed never stops the run.</span></div>
+      <div class="pstep"><span class="n">02</span><span class="act"><span class="verb">Canonicalize</span><span class="tool">Python</span></span><span class="detail">Strip tracking params, sort the query, collapse arXiv <code>/pdf/</code> and <code>v2</code> variants, hash the URL.</span></div>
+      <div class="pstep"><span class="n">03</span><span class="act"><span class="verb">Deduplicate</span><span class="tool">dbt</span></span><span class="detail">One row per hash, keeping the earliest sighting but the maximum engagement across sources. Guarded by a uniqueness test that stops the pipeline.</span></div>
+      <div class="pstep"><span class="n">04</span><span class="act"><span class="verb">Budget</span><span class="tool">Python</span></span><span class="detail">20 candidates per source, ranked by profile keywords first &mdash; so one busy source cannot spend the whole allowance.</span></div>
+      <div class="pstep"><span class="n">05</span><span class="act"><span class="verb">Triage</span><span class="tool">GLM&nbsp;4.5</span></span><span class="detail">Each item scored 0&ndash;10 against a written interest profile. One item per request, so scores stay comparable.</span></div>
+      <div class="pstep"><span class="n">06</span><span class="act"><span class="verb">Rank</span><span class="tool">dbt</span></span><span class="detail">Score &times; source trust &times; corroboration, decayed by age. Roughly 26% lost per day.</span></div>
+      <div class="pstep"><span class="n">07</span><span class="act"><span class="verb">Cap</span><span class="tool">dbt</span></span><span class="detail">At most 3 per source, 2 per subject, 4 per category &mdash; then top&nbsp;up to ten.</span></div>
+      <div class="pstep"><span class="n">08</span><span class="act"><span class="verb">Deliver</span><span class="tool">Discord</span></span><span class="detail">Sent, then written to a ledger, so nothing is ever delivered twice.</span></div>
+      <div class="pstep"><span class="n">09</span><span class="act"><span class="verb">Publish</span><span class="tool">Pages</span></span><span class="detail">This archive, rebuilt from the ledger after every run.</span></div>
+      <div class="pstep"><span class="n">10</span><span class="act"><span class="verb">Schedule</span><span class="tool">Actions</span></span><span class="detail">05:00&nbsp;UTC daily. A failure alerts the same channel.</span></div>
     </div>
 
     <nav>
