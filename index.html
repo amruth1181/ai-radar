@@ -1,0 +1,1316 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Radar</title>
+<meta name="description" content="A daily AI-news digest, ranked against one reader's interests. Built as a data pipeline: dlt, dbt, BigQuery, an LLM triage step, and GitHub Actions.">
+<style>
+  /* Everything inline. The published page carries no credentials, no analytics and
+     no external requests -- open it with networking off and it renders completely. */
+  :root {
+    --ground: #fbfbfa;
+    --surface: #fff;
+    --ink: #14171a;
+    --ink-soft: #4d5560;
+    --ink-faint: #7c8794;
+    --rule: #e3e5e8;
+    --accent: #1f6f5c;
+    --model_release: #c2410c;
+    --research: #1d4ed8;
+    --tooling: #15803d;
+    --industry: #6b7280;
+    --policy: #7e22ce;
+    --tutorial: #0e7490;
+    --other: #52525b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #0f1113;
+      --surface: #16191c;
+      --ink: #e9ecef;
+      --ink-soft: #a7b0ba;
+      --ink-faint: #79838e;
+      --rule: #272b30;
+      --accent: #4db69a;
+      --model_release: #fb923c;
+      --research: #7ea6f0;
+      --tooling: #4ade80;
+      --industry: #9ca3af;
+      --policy: #c084fc;
+      --tutorial: #38bdf8;
+      --other: #a1a1aa;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 46rem; margin: 0 auto; padding: 2.5rem 1.25rem 5rem; }
+  a { color: inherit; }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+  h1 { font-size: 1.75rem; line-height: 1.15; letter-spacing: -.02em; margin: 0 0 .35rem; text-wrap: balance; }
+  h2 { font-size: 1.1rem; letter-spacing: -.01em; margin: 0; }
+  p { margin: 0; }
+
+  header { border-bottom: 1px solid var(--rule); padding-bottom: 1.5rem; margin-bottom: 2rem; }
+  header .tag { font-size: .75rem; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
+  header .blurb { color: var(--ink-soft); margin-top: .6rem; max-width: 40rem; }
+  header .how { margin-top: .9rem; color: var(--ink-soft); font-size: .9375rem; max-width: 40rem; }
+
+  /* Numbered because it genuinely is a sequence, and the order carries the argument:
+     deduplication happens BEFORE the model sees anything, so a paper on arXiv, Hacker
+     News and Reddit is scored once rather than three times. That ordering is what
+     keeps the running cost at zero. */
+  .pipeline { margin-top: 1.25rem; display: flex; flex-direction: column; border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; background: var(--surface); }
+  .pstep { display: grid; grid-template-columns: 2rem 7.5rem 1fr; gap: .75rem; align-items: baseline; padding: .55rem .85rem; border-bottom: 1px solid var(--rule); }
+  .pstep:last-child { border-bottom: none; }
+  .pstep .n { font-size: .6875rem; font-weight: 600; color: var(--ink-faint); font-variant-numeric: tabular-nums; letter-spacing: .04em; }
+  .pstep .act { display: flex; flex-direction: column; gap: .05rem; }
+  .pstep .verb { font-size: .8125rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+  .pstep .tool { font-size: .75rem; color: var(--accent); font-weight: 600; }
+  .pstep .detail { font-size: .8125rem; color: var(--ink-soft); line-height: 1.5; }
+  @media (max-width: 34rem) {
+    .pstep { grid-template-columns: 1.6rem 1fr; row-gap: .2rem; }
+    .pstep .detail { grid-column: 2; }
+  }
+
+  header nav { margin-top: 1.1rem; font-size: .875rem; }
+  header nav a { color: var(--accent); text-decoration: none; font-weight: 500; }
+  header nav a:hover { text-decoration: underline; }
+
+  .day-section + .day-section { margin-top: 3rem; padding-top: 2rem; border-top: 1px solid var(--rule); }
+  .day-head { display: flex; align-items: baseline; gap: .75rem; flex-wrap: wrap; margin-bottom: 1.25rem; }
+  .day-head a { text-decoration: none; color: inherit; }
+  .day-head a:hover { color: var(--accent); }
+  .day-head .count { font-size: .8125rem; color: var(--ink-faint); margin-left: auto; font-variant-numeric: tabular-nums; }
+
+  .items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1.5rem; }
+  .item { border-left: 3px solid var(--cat, var(--other)); padding-left: 1rem; }
+  .item .cat {
+    font-size: .6875rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--cat, var(--other));
+  }
+  .item .title { display: block; font-size: 1.0625rem; font-weight: 600; line-height: 1.35; margin: .15rem 0 .3rem; text-decoration: none; }
+  .item .title:hover { text-decoration: underline; text-decoration-color: var(--cat, var(--other)); }
+  .item .summary { color: var(--ink-soft); font-size: .9375rem; }
+  .item .meta { margin-top: .4rem; font-size: .8125rem; color: var(--ink-faint); display: flex; flex-wrap: wrap; gap: .4rem .75rem; }
+  .item .meta .score { font-variant-numeric: tabular-nums; }
+  .item .meta a { color: var(--ink-faint); }
+
+  .item[data-cat="model_release"] { --cat: var(--model_release); }
+  .item[data-cat="research"]      { --cat: var(--research); }
+  .item[data-cat="tooling"]       { --cat: var(--tooling); }
+  .item[data-cat="industry"]      { --cat: var(--industry); }
+  .item[data-cat="policy"]        { --cat: var(--policy); }
+  .item[data-cat="tutorial"]      { --cat: var(--tutorial); }
+
+  .archive { margin-top: 3rem; border-top: 1px solid var(--rule); padding-top: 1.5rem; }
+  .archive h2 { margin-bottom: .75rem; }
+  .archive ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+  .archive li { border-bottom: 1px solid var(--rule); }
+  .archive a { display: flex; gap: .75rem; align-items: baseline; padding: .6rem 0; text-decoration: none; }
+  .archive a:hover .date { color: var(--accent); }
+  .archive .date { font-weight: 500; font-size: .9375rem; }
+  .archive .n { font-size: .8125rem; color: var(--ink-faint); margin-left: auto; font-variant-numeric: tabular-nums; }
+  .archive .peek { font-size: .8125rem; color: var(--ink-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .pager { display: flex; justify-content: space-between; gap: 1rem; margin-top: 2.5rem; padding-top: 1.25rem; border-top: 1px solid var(--rule); font-size: .875rem; }
+  .pager a { color: var(--accent); text-decoration: none; font-weight: 500; }
+  .pager a:hover { text-decoration: underline; }
+
+  .empty { background: var(--surface); border: 1px solid var(--rule); border-radius: 4px; padding: 1.5rem; color: var(--ink-soft); }
+
+  footer { margin-top: 3.5rem; padding-top: 1.25rem; border-top: 1px solid var(--rule); font-size: .8125rem; color: var(--ink-faint); display: flex; flex-direction: column; gap: .4rem; }
+  footer a { color: var(--ink-faint); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="tag">AI Radar</div>
+    <h1>A daily AI digest, ranked for one reader</h1>
+    <p class="blurb">
+      About 200 AI items surface across 14 sources every day &mdash; arXiv, lab blogs,
+      Hacker News, GitHub and Reddit. This picks ten and sends them to a chat channel
+      every morning at 05:00&nbsp;UTC. Each section below is one day's digest.
+    </p>
+    <p class="how">
+      Items are deduplicated on a canonical URL hash first, so a paper appearing on
+      arXiv, Hacker News and Reddit is one row &mdash; and is scored once rather than
+      three times. An LLM then rates each 0&ndash;10 against a written interest profile.
+      The ranking weights that score by source trust and independent corroboration,
+      decays it by age, and caps how many items any one source, topic or category can
+      take, so a single busy subject cannot fill the digest.
+    </p>
+
+    <div class="pipeline">
+      <div class="pstep"><span class="n">01</span><span class="act"><span class="verb">Fetch</span><span class="tool">dlt</span></span><span class="detail">14 sources on incremental cursors, each isolated so one dead feed never stops the run.</span></div>
+      <div class="pstep"><span class="n">02</span><span class="act"><span class="verb">Canonicalize</span><span class="tool">Python</span></span><span class="detail">Strip tracking params, sort the query, collapse arXiv <code>/pdf/</code> and <code>v2</code> variants, hash the URL.</span></div>
+      <div class="pstep"><span class="n">03</span><span class="act"><span class="verb">Deduplicate</span><span class="tool">dbt</span></span><span class="detail">One row per hash, keeping the earliest sighting but the maximum engagement across sources. Guarded by a uniqueness test that stops the pipeline.</span></div>
+      <div class="pstep"><span class="n">04</span><span class="act"><span class="verb">Budget</span><span class="tool">Python</span></span><span class="detail">20 candidates per source, ranked by profile keywords first &mdash; so one busy source cannot spend the whole allowance.</span></div>
+      <div class="pstep"><span class="n">05</span><span class="act"><span class="verb">Triage</span><span class="tool">GLM&nbsp;4.5</span></span><span class="detail">Each item scored 0&ndash;10 against a written interest profile. One item per request, so scores stay comparable.</span></div>
+      <div class="pstep"><span class="n">06</span><span class="act"><span class="verb">Rank</span><span class="tool">dbt</span></span><span class="detail">Score &times; source trust &times; corroboration, decayed by age. Roughly 26% lost per day.</span></div>
+      <div class="pstep"><span class="n">07</span><span class="act"><span class="verb">Cap</span><span class="tool">dbt</span></span><span class="detail">At most 3 per source, 2 per subject, 4 per category &mdash; then top&nbsp;up to ten.</span></div>
+      <div class="pstep"><span class="n">08</span><span class="act"><span class="verb">Deliver</span><span class="tool">Discord</span></span><span class="detail">Sent, then written to a ledger, so nothing is ever delivered twice.</span></div>
+      <div class="pstep"><span class="n">09</span><span class="act"><span class="verb">Publish</span><span class="tool">Pages</span></span><span class="detail">This archive, rebuilt from the ledger after every run.</span></div>
+      <div class="pstep"><span class="n">10</span><span class="act"><span class="verb">Schedule</span><span class="tool">Actions</span></span><span class="detail">05:00&nbsp;UTC daily. A failure alerts the same channel.</span></div>
+    </div>
+
+    <nav>
+      <a href="./">Latest</a> &nbsp;·&nbsp; <a href="https://github.com/amruth1181/ai-radar">Source on GitHub</a>
+    </nav>
+  </header>
+
+  <section class="day-section">
+    <div class="day-head">
+      <h2><a href="2026-10-03.html">Saturday 3 October 2026</a></h2>
+      <span class="count">10 items</span>
+    </div>
+<ul class="items">
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://huggingface.co/blog/allenai/astabrief">Open-sourcing AstaBrief, the fast report-generation model in Asta</a>
+    <p class="summary">Asta has open-sourced AstaBrief, a fast report-generation model with practical deployment details and benchmarks.</p>
+    <div class="meta">
+      <span>huggingface_blog</span>
+      <span class="score">score 7/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="tooling">
+    <span class="cat">tooling</span>
+    <a class="title" href="https://dwarfstar.sh">From the creator of Redis; run LLM locally with ds4</a>
+    <p class="summary">ds4 is a new framework for running large language models locally, developed by the creator of Redis.</p>
+    <div class="meta">
+      <span>hn_ai</span>
+      <span class="score">score 8/10</span>
+      <a href="https://news.ycombinator.com/item?id=49936575">discussion</a>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wwfyv6/qwen4exp_halve_the_indexer_score_memory_by">qwen4exp : halve the indexer score memory by ServeurpersoCom · Pull Request #29825 · ggml-org/llama.cpp</a>
+    <p class="summary">A pull request to reduce Qwen4 indexer memory usage by half in llama.cpp.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wwggwt/qwen38flashnext_177b_running_at_1115_toks_on_a">Qwen3.8-Flash-Next 177B running at 11–15 tok/s on a single RTX 5070 12GB + 32GB RAM DDR4</a>
+    <p class="summary">Qwen3.8-Flash-Next 177B runs at 11-15 tok/s on RTX 5070 with optimizations like I/O queue-depth fixes and page-locked hot-expert tier.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://wagtail.org/blog/one-month-on-glm-53-flash">One month coding with GLM 5.3 Flash</a>
+    <p class="summary">User experience running GLM 5.3 Flash locally on a MacBook, comparing performance against Claude 3.5 Sonnet and Gemini 1.5 Pro.</p>
+    <div class="meta">
+      <span>hn_ai</span>
+      <span class="score">score 8/10</span>
+      <a href="https://news.ycombinator.com/item?id=49934620">discussion</a>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wvt1m4/two_96_gb_ascend_cards_crun_qwen38flashnext">Two 96 GB Ascend cards crun Qwen3.8-flash-next hardware notes, vLLM work, benchmarks, and what is next</a>
+    <p class="summary">Local inference setup with two Huawei Atlas cards achieves 61 tok/s for Qwen3.8 Flash-Next model after software optimizations.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 9/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1ww40o2/microsoftfrognano4b2609_hugging_face">microsoft/FrogNano-4B-2609 · Hugging Face</a>
+    <p class="summary">Microsoft released FrogNano-4B, a specialized 4B parameter model for software engineering tasks that can generate repository changes through the Leaf harness.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="tooling">
+    <span class="cat">tooling</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1ww1sn4/cuda_fuse_shared_experts_into_mmvq_by_am17an_pull">CUDA: fuse shared experts into MMVQ by am17an · Pull Request #29184 · ggml-org/llama.cpp</a>
+    <p class="summary">CUDA implementation fusing shared experts into MMVQ for MoE models, potentially speeding up inference for architectures like Qwen 35B A3B.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="tooling">
+    <span class="cat">tooling</span>
+    <a class="title" href="https://github.com/QingYunA/answer-me-with-html">QingYunA/answer-me-with-html</a>
+    <p class="summary">A tool that generates HTML-based answers to complex questions for better readability.</p>
+    <div class="meta">
+      <span>github_llm_repos</span>
+      <span class="score">score 6/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="research">
+    <span class="cat">research</span>
+    <a class="title" href="https://technologyreview.com/2026/10/02/1145639/dont-be-fooled-llms-dont-reason">Don&#39;t be fooled–LLMs don&#39;t reason</a>
+    <p class="summary">Research examining LLM reasoning capabilities finds they primarily rely on pattern matching rather than true reasoning.</p>
+    <div class="meta">
+      <span>hn_ai</span>
+      <span class="score">score 6/10</span>
+      <a href="https://news.ycombinator.com/item?id=49933459">discussion</a>
+    </div>
+  </li>
+</ul>  </section>
+  <section class="day-section">
+    <div class="day-head">
+      <h2><a href="2026-10-02.html">Friday 2 October 2026</a></h2>
+      <span class="count">10 items</span>
+    </div>
+<ul class="items">
+  <li class="item" data-cat="other">
+    <span class="cat">other</span>
+    <a class="title" href="https://arxiv.org/abs/2610.02122">Argo-Bench: Evaluating Data Agents on Enterprise-Scale Workflows</a>
+    <p class="summary">Argo-Bench evaluates data agents on enterprise-scale workflows using a simulated food delivery platform with 235 tables and 7.5 billion rows.</p>
+    <div class="meta">
+      <span>arxiv_cs_ai + arxiv_cs_cl</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="research">
+    <span class="cat">research</span>
+    <a class="title" href="https://arxiv.org/abs/2610.00983">The Devil Is in the Reconstruction Loss Scale: Rethinking Optimization in LLM Quantization</a>
+    <p class="summary">Research reveals optimization imbalance in LLM quantization due to reconstruction loss scale, proposing RMSE variants as superior alternatives to MSE.</p>
+    <div class="meta">
+      <span>arxiv_cs_ai + arxiv_cs_cl</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="research">
+    <span class="cat">research</span>
+    <a class="title" href="https://arxiv.org/abs/2610.00694">How Divergence Becomes Decision Flips in Compressed Language Models</a>
+    <p class="summary">Research shows total variation distance, not KL divergence, better predicts decision flip rates in compressed language models across multiple benchmarks.</p>
+    <div class="meta">
+      <span>arxiv_cs_ai + arxiv_cs_cl + arxiv_cs_lg</span>
+      <span class="score">score 7/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="research">
+    <span class="cat">research</span>
+    <a class="title" href="https://arxiv.org/abs/2606.17710">Vision-language models for chest radiography do not always need the image</a>
+    <p class="summary">Research shows vision-language models for chest radiographs often achieve high accuracy without examining the actual image, raising questions about proper medical evaluation.</p>
+    <div class="meta">
+      <span>arxiv_cs_ai + arxiv_cs_cl + arxiv_cs_lg</span>
+      <span class="score">score 7/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="research">
+    <span class="cat">research</span>
+    <a class="title" href="https://arxiv.org/abs/2607.17384">Quantifying Diversity of Thought: A Predictive Law of Weighted LLM Ensemble Lift</a>
+    <p class="summary">Paper derives formal law for calculating LLM ensemble lift from diversity of thought, validated on 767k+ inferences across benchmarks.</p>
+    <div class="meta">
+      <span>arxiv_cs_ai + arxiv_cs_lg</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="research">
+    <span class="cat">research</span>
+    <a class="title" href="https://arxiv.org/abs/2610.01936">Mapping the RAG Landscape: A Four Axis Taxonomy of Efficiency, Defense, Interactivity, and Reasoning</a>
+    <p class="summary">A taxonomy survey of recent RAG developments covering efficiency, robustness, interactivity, and reasoning with practical deployment insights.</p>
+    <div class="meta">
+      <span>arxiv_cs_ai</span>
+      <span class="score">score 9/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="tooling">
+    <span class="cat">tooling</span>
+    <a class="title" href="https://huggingface.co/blog/ServiceNow-AI/autosynthdata">AutoSynthData: Generating Training Data for Enterprise Agents</a>
+    <p class="summary">AutoSynthData is a framework for automatically generating training data for enterprise agents using LLMs.</p>
+    <div class="meta">
+      <span>huggingface_blog</span>
+      <span class="score">score 6/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://huggingface.co/blog/allenai/olmocore3">Introducing Olmo-core 3: Open, scalable training infrastructure for large MoEs</a>
+    <p class="summary">Hugging Face releases Olmo-core 3, an open infrastructure for training large mixture-of-experts models.</p>
+    <div class="meta">
+      <span>huggingface_blog</span>
+      <span class="score">score 6/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="tooling">
+    <span class="cat">tooling</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wva7l2/running_955_gib_qwen38flashnext_at_4152_toks_on_a">Running 95.5 GiB Qwen3.8-Flash-Next at 41–52 tok/s on a 64GB Mac (1.76x faster than llama.cpp): Slipstream release, 130k context scaling, + Swift variant</a>
+    <p class="summary">Slipstream achieves 1.76x speedup for Qwen3.8-Flash-Next model on 64GB Mac, maintaining stable performance up to 130k tokens.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 9/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wvfz9n/perplexity_decider_27b_open_weights_decision">Perplexity Decider 27B: Open weights decision model fine tune of Qwen3.8 27B</a>
+    <p class="summary">Perplexity released Decider 27B, an open-weight decision model based on Qwen3.8 27B, likely for RAG and reasoning tasks.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+</ul>  </section>
+  <section class="day-section">
+    <div class="day-head">
+      <h2><a href="2026-10-01.html">Thursday 1 October 2026</a></h2>
+      <span class="count">10 items</span>
+    </div>
+<ul class="items">
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://deepmind.google/blog/gemini-4-argon-our-next-era-of-frontier-intelligence">Gemini 4 Argon: our next era of frontier intelligence</a>
+    <p class="summary">Deepmind announces Gemini 4 Argon, a frontier model with enhanced reasoning and multimodal capabilities.</p>
+    <div class="meta">
+      <span>deepmind_blog</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="research">
+    <span class="cat">research</span>
+    <a class="title" href="https://arxiv.org/abs/2609.37469">Relevance Is Not Sufficient Evidence: Detecting Evidence Gaps Before Generation in RAG</a>
+    <p class="summary">RINSE detects evidence gaps in RAG systems before generation by combining three signals to judge evidence sufficiency, outperforming prior methods.</p>
+    <div class="meta">
+      <span>arxiv_cs_cl</span>
+      <span class="score">score 9/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="research">
+    <span class="cat">research</span>
+    <a class="title" href="https://arxiv.org/abs/2609.37494">Your Benchmark Is Not Saturated: Reviving Multiple-Choice Evaluation with Answer Pooling</a>
+    <p class="summary">AnswerPool improves multiple-choice benchmark difficulty by pooling options from multiple questions, making elimination harder and measuring elimination credit.</p>
+    <div class="meta">
+      <span>arxiv_cs_cl</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="research">
+    <span class="cat">research</span>
+    <a class="title" href="https://arxiv.org/abs/2609.35831">Beyond the Context Window: An Adaptive Entropy-Based Routing Framework for Hybrid Retrieval and Long-Context Language Models</a>
+    <p class="summary">EDAR framework uses predictive entropy to route queries between RAG and long-context processing, reducing token expenditure by 70.7% while maintaining accuracy.</p>
+    <div class="meta">
+      <span>arxiv_cs_cl</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="research">
+    <span class="cat">research</span>
+    <a class="title" href="https://arxiv.org/abs/2609.38847">Scoring Higher, Answering Worse: Mitigating Reward Hacking in Rubric-Based RL via Protocol-Level Rubrics</a>
+    <p class="summary">Research shows additive aggregation in rubric-based RL leads to reward hacking where models score higher but perform worse on critical criteria.</p>
+    <div class="meta">
+      <span>arxiv_cs_ai + arxiv_cs_lg</span>
+      <span class="score">score 7/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://arxiv.org/abs/2602.03537">MatGPTQ: Efficient and Accurate Inference over Nested Quantized Models</a>
+    <p class="summary">MatGPTQ enables efficient inference over nested quantized models with up to 3.5× speedups over BF16 at low precision.</p>
+    <div class="meta">
+      <span>arxiv_cs_lg</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://deepmind.google/blog/introducing-synthid-bio">Introducing SynthID Bio</a>
+    <p class="summary">DeepMind introduces SynthID Bio, a proof-of-concept for watermarking AI-generated proteins while maintaining biological function.</p>
+    <div class="meta">
+      <span>deepmind_blog</span>
+      <span class="score">score 5/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wujph3/two_openweights_releases_victoria_qwen38flashnext">Two open-weights releases: Victoria (Qwen3.8-Flash-Next with 44% of experts cut, 70% Terminal-Bench 2.1, GGUF included) and Maple (a Canada-first fine-tune)</a>
+    <p class="summary">Two open-weight models released: Victoria (optimized Qwen3.8-Flash-Next with expert pruning) and Maple (Canada-focused fine-tune), with performance benchmarks and practical deployment details.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 9/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="tooling">
+    <span class="cat">tooling</span>
+    <a class="title" href="https://github.com/magnitudedev/magnitude">Launch HN: Magnitude (YC S25) – Self-optimizing inference engine for agents</a>
+    <p class="summary">Magnitude is an inference engine that optimizes itself for local hardware to run agent workloads up to 2x faster than llama.cpp with dynamic memory allocation.</p>
+    <div class="meta">
+      <span>hn_ai</span>
+      <span class="score">score 8/10</span>
+      <a href="https://news.ycombinator.com/item?id=49911995">discussion</a>
+    </div>
+  </li>
+  <li class="item" data-cat="tooling">
+    <span class="cat">tooling</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wuj70v/open_source_inference_engine_like_lm_studio_or">Open source inference engine (like LM Studio or Unsloth Desktop) that optimizes itself for your exact hardware. Compiles and tunes its kernels on your device, so open models run up to 2x faster than llama.cpp. Works on Apple Silicon, NVIDIA, AMD or nothing but a CPU.</a>
+    <p class="summary">An open source inference engine that optimizes itself for specific hardware, compiling and tuning kernels to improve performance of open models by up to 2x compared to llama.cpp.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+</ul>  </section>
+  <section class="day-section">
+    <div class="day-head">
+      <h2><a href="2026-09-30.html">Wednesday 30 September 2026</a></h2>
+      <span class="count">10 items</span>
+    </div>
+<ul class="items">
+  <li class="item" data-cat="research">
+    <span class="cat">research</span>
+    <a class="title" href="https://arxiv.org/abs/2406.00083">BadRAG: Identifying Vulnerabilities in Retrieval Augmented Generation of Large Language Models</a>
+    <p class="summary">BadRAG identifies a vulnerability where attackers can inject malicious passages into RAG systems&#39; knowledge bases to manipulate responses using trigger words.</p>
+    <div class="meta">
+      <span>arxiv_cs_ai + arxiv_cs_cl</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://openai.com/index/introducing-gpt-6-1-sol">Introducing GPT-6.1 Sol</a>
+    <p class="summary">OpenAI released GPT-6.1 Sol model with near-Astra intelligence at lower token costs for coding and professional work.</p>
+    <div class="meta">
+      <span>openai_news</span>
+      <span class="score">score 7/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://huggingface.co/blog/nvidia/kumo-tabular">NVIDIA Kumo Tabular Sets a New Accuracy-Efficiency Frontier for Tabular Prediction</a>
+    <p class="summary">NVIDIA Kumo Tabular achieves state-of-the-art accuracy with 4x faster inference on tabular data, supporting frameworks like PyTorch and TensorFlow.</p>
+    <div class="meta">
+      <span>huggingface_blog</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="research">
+    <span class="cat">research</span>
+    <a class="title" href="https://arxiv.org/abs/2609.36505">BRIDGE: Bilevel Retrieval-Credit-Aware Agentic Reinforcement Learning</a>
+    <p class="summary">BRIDGE introduces a bilevel optimization method for joint training of retrievers and LLM policies in agentic reinforcement learning, improving multi-hop QA accuracy by up to 9.6 points.</p>
+    <div class="meta">
+      <span>arxiv_cs_ai</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="research">
+    <span class="cat">research</span>
+    <a class="title" href="https://arxiv.org/abs/2605.18770">Agentic Graph Retrieval-Augmented Generation for Auditable Commercial Registry Analysis</a>
+    <p class="summary">Paper introduces auditable GraphRAG for commercial registry analysis using Neo4j knowledge graphs, improving factual correctness from 0.26 to 0.83.</p>
+    <div class="meta">
+      <span>arxiv_cs_ai</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://simonwillison.net/2026/Sep/29/hn-49898129">GPT 6.1 Sol: Near-Astra intelligence for a fifth of the price</a>
+    <p class="summary">OpenAI released GPT-6.1-Sol model claims near-Astra intelligence at lower cost.</p>
+    <div class="meta">
+      <span>simon_willison</span>
+      <span class="score">score 6/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="tooling">
+    <span class="cat">tooling</span>
+    <a class="title" href="https://huggingface.co/blog/MultiverseComputingCAI/getting-the-source-right-not-just-the-fact-source">Getting the Source Right, Not Just the Fact: Source-Aware Verification for MCP Agents</a>
+    <p class="summary">Hugging Face introduces source-aware verification for MCP agents to improve fact-checking.</p>
+    <div class="meta">
+      <span>huggingface_blog</span>
+      <span class="score">score 6/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wu0bdf/add_glm53flash_glm5next_support_by_timkhronos">add GLM-5.3-Flash (GLM5-Next) support by timkhronos · Pull Request #27773 · ggml-org/llama.cpp</a>
+    <p class="summary">llama.cpp adds support for GLM-5.3-Flash model, enabling local inference on consumer hardware.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="tooling">
+    <span class="cat">tooling</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wtv43r/qwen38_flash_next_istadaslab_gguf_50ts_tg_and">Qwen3.8 flash next ISTA-DASLab GGUF 50t/s TG and 1500t/s PP with 12GB VRAM and 64GB RAM Laptop on &#39;Strata&#39; engine</a>
+    <p class="summary">New inference engine &#39;Strata&#39; achieves 50-1500 tokens/s on Qwen3.8 model with 12GB VRAM laptop</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="research">
+    <span class="cat">research</span>
+    <a class="title" href="https://agmai.org/general-sep29">Responsible Release of AI-Generated Mathematics</a>
+    <p class="summary">Preprint paper on responsible release of AI-generated mathematics focusing on verification and error detection.</p>
+    <div class="meta">
+      <span>hn_ai</span>
+      <span class="score">score 6/10</span>
+      <a href="https://news.ycombinator.com/item?id=49903713">discussion</a>
+    </div>
+  </li>
+</ul>  </section>
+  <section class="day-section">
+    <div class="day-head">
+      <h2><a href="2026-09-29.html">Tuesday 29 September 2026</a></h2>
+      <span class="count">10 items</span>
+    </div>
+<ul class="items">
+  <li class="item" data-cat="tutorial">
+    <span class="cat">tutorial</span>
+    <a class="title" href="https://magazine.sebastianraschka.com/p/classifier-history-and-jev">Language Models for Text Classification: From Bag-of-Words to Jev</a>
+    <p class="summary">A visual guide covering traditional and modern text classification approaches with hands-on experiments.</p>
+    <div class="meta">
+      <span>hn_ai + sebastian_raschka</span>
+      <span class="score">score 7/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="research">
+    <span class="cat">research</span>
+    <a class="title" href="https://arxiv.org/abs/2510.13602">NOSA: Native and Offloadable Sparse Attention</a>
+    <p class="summary">NOSA improves LLM decoding throughput by up to 5x with KV cache offloading while maintaining generation quality.</p>
+    <div class="meta">
+      <span>arxiv_cs_ai + arxiv_cs_cl + arxiv_cs_lg</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://arxiv.org/abs/2609.32429">PrismQuant: Optimal Null-Space Rotations for Grouped Quantizers</a>
+    <p class="summary">PrismQuant introduces optimal rotations for grouped quantization, improving performance on LLMs with minimal accuracy loss and significant speedups.</p>
+    <div class="meta">
+      <span>arxiv_cs_ai + arxiv_cs_lg</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="research">
+    <span class="cat">research</span>
+    <a class="title" href="https://arxiv.org/abs/2609.33467">A Cheap Verifier is Good Enough: LLM Post-training is Robust to Erroneous Rewards</a>
+    <p class="summary">Research showing inexpensive verifiers can match expensive ones for post-training LLM evaluation with minimal performance trade-offs.</p>
+    <div class="meta">
+      <span>arxiv_cs_ai + arxiv_cs_cl + arxiv_cs_lg</span>
+      <span class="score">score 7/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="research">
+    <span class="cat">research</span>
+    <a class="title" href="https://arxiv.org/abs/2608.06578">From Behavior to Mechanism: Tracing Divergent Response Modes in Frontier Language Models</a>
+    <p class="summary">Research comparing 6 frontier language models reveals distinct behavioral patterns under steering pressure, with notable differences in response modes and resistance to suppression instructions.</p>
+    <div class="meta">
+      <span>arxiv_cs_ai + arxiv_cs_cl + arxiv_cs_lg</span>
+      <span class="score">score 7/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://simonwillison.net/2026/Sep/28/claude-sonnet-5-5">Claude Sonnet 5.5</a>
+    <p class="summary">Anthropic released Claude Sonnet 5.5 with 30%+ speed improvement and cost reduction, now powering the free tier of claude.ai.</p>
+    <div class="meta">
+      <span>simon_willison</span>
+      <span class="score">score 7/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="research">
+    <span class="cat">research</span>
+    <a class="title" href="https://arxiv.org/abs/2609.34653">OmniTide: Co-Designing Algorithms and Systems for Efficient On-Device Omni-LLM Streaming</a>
+    <p class="summary">OmniTide is an algorithm-system co-design for efficient on-device streaming omni-modal inference that reduces memory fragmentation and improves performance.</p>
+    <div class="meta">
+      <span>arxiv_cs_ai + arxiv_cs_lg</span>
+      <span class="score">score 7/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://arxiv.org/abs/2609.31669">NanoForecast v0.5: Competitive Time Series Forecasting Through Training Pipeline Optimization</a>
+    <p class="summary">NanoForecast v0.5 achieves competitive time series forecasting with only 6.5M parameters by optimizing training pipeline without changing architecture.</p>
+    <div class="meta">
+      <span>arxiv_cs_lg</span>
+      <span class="score">score 7/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="tooling">
+    <span class="cat">tooling</span>
+    <a class="title" href="https://stateofutopia.com/experiments/microllmlab">MicroLLM lab - tiny LLMs, Q4, in your browser</a>
+    <p class="summary">MicroLLM lab enables running tiny LLMs directly in browser with Q4 quantization, offering practical local inference for edge devices.</p>
+    <div class="meta">
+      <span>hn_ai + lobsters_ai</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://github.com/Low-Zi-Hong/ESP32s3-LLM-Cluster">ESP32S3 cluster running 1.58-bit (BitNet) Language model</a>
+    <p class="summary">Researchers demonstrated running BitNet, a 1.58-bit language model, on an ESP32S3 microcontroller cluster.</p>
+    <div class="meta">
+      <span>hn_ai</span>
+      <span class="score">score 8/10</span>
+      <a href="https://news.ycombinator.com/item?id=49884625">discussion</a>
+    </div>
+  </li>
+</ul>  </section>
+  <section class="day-section">
+    <div class="day-head">
+      <h2><a href="2026-09-28.html">Monday 28 September 2026</a></h2>
+      <span class="count">10 items</span>
+    </div>
+<ul class="items">
+  <li class="item" data-cat="research">
+    <span class="cat">research</span>
+    <a class="title" href="https://arxiv.org/abs/2609.30465">RAZOR: Pruning Replaceable Experts in LLMs</a>
+    <p class="summary">RAZOR is a training-free method for pruning experts in MoE models that preserves model performance better than existing techniques.</p>
+    <div class="meta">
+      <span>arxiv_cs_cl + arxiv_cs_lg</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="research">
+    <span class="cat">research</span>
+    <a class="title" href="https://arxiv.org/abs/2609.31009">G$^2$PTQ: Improving LLM Post-Training Quantization with Generalized Gradient Compensation</a>
+    <p class="summary">G$^2$PTQ improves LLM post-training quantization by combining first- and second-order information with block-wise optimization and trust-region scaling.</p>
+    <div class="meta">
+      <span>arxiv_cs_ai + arxiv_cs_cl</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="research">
+    <span class="cat">research</span>
+    <a class="title" href="https://arxiv.org/abs/2608.09444">Depth-adaptive Inference of Looped Language Models via Continuous Depth Batching</a>
+    <p class="summary">A new method enables efficient depth-adaptive inference for looped language models through continuous depth batching, achieving near-maximum potential speedups.</p>
+    <div class="meta">
+      <span>arxiv_cs_cl + arxiv_cs_lg</span>
+      <span class="score">score 7/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://huggingface.co/blog/Hcompany/holo4">Holo4: powering generalist computer-use agents</a>
+    <p class="summary">Holo4 is a new framework for creating generalist computer-use agents with improved vision capabilities and tool integration.</p>
+    <div class="meta">
+      <span>huggingface_blog</span>
+      <span class="score">score 6/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="research">
+    <span class="cat">research</span>
+    <a class="title" href="https://arxiv.org/abs/2602.00158">RAPTOR: Ridge-Adaptive Logistic Probes</a>
+    <p class="summary">RAPTOR introduces a ridge-regularized logistic probe for extracting concept vectors from LLM layers that improves accuracy and reduces training cost.</p>
+    <div class="meta">
+      <span>arxiv_cs_ai + arxiv_cs_lg</span>
+      <span class="score">score 7/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://arxiv.org/abs/2609.30270">HybridInfer: Thermal-Aware Reinforcement-Learning Tier Routing for On-Device, Edge, and Cloud LLM Inference</a>
+    <p class="summary">HybridInfer uses reinforcement learning to route LLM queries across on-device, edge, and cloud tiers based on thermal constraints and query complexity.</p>
+    <div class="meta">
+      <span>arxiv_cs_lg</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="tooling">
+    <span class="cat">tooling</span>
+    <a class="title" href="https://simonwillison.net/2026/Sep/27/bluesky-bot-check">Bluesky reply bot checker</a>
+    <p class="summary">Tool for detecting automated reply bots on Bluesky by analyzing account behavior and reply patterns.</p>
+    <div class="meta">
+      <span>simon_willison</span>
+      <span class="score">score 5/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wrxap8/qwen38flashnext_177b_nvfp4119gib_ssd_streaming_at">Qwen3.8-Flash-Next 177B NVFP4(119GiB): SSD streaming at 9-10 tok/s on one 16 GB RTX 5060 Ti + 32 GB RAM</a>
+    <p class="summary">Inference engine enables SSD streaming of MoE models achieving 9-10 tok/s on a 16GB GPU with 119B parameter Qwen model.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 9/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="tooling">
+    <span class="cat">tooling</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1ws5l5p/macos_27_ships_a_free_local_llm_on_apple_silicon">macOS 27 ships a free local LLM on Apple Silicon Macs. I made it easy to use from Node and Python</a>
+    <p class="summary">A Node/Python library for Apple&#39;s built-in macOS LLM that simplifies local model usage without downloads or API keys.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1ws6bmh/liked_muse_so_i_cut_the_30b_model_in_half_by">Liked Muse, so I cut the 30B model in half by width, distilled it back, and it does 57 of 60 tool tasks its parent does 60 of</a>
+    <p class="summary">A 14B parameter model distilled from 30B Muse-Glimmer retains 95% tool task capability while being quantized to 10.3GB.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+</ul>  </section>
+  <section class="day-section">
+    <div class="day-head">
+      <h2><a href="2026-09-27.html">Sunday 27 September 2026</a></h2>
+      <span class="count">10 items</span>
+    </div>
+<ul class="items">
+  <li class="item" data-cat="tooling">
+    <span class="cat">tooling</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wrd1p1/splash_fork_optimised_for_m5_max_15_faster_125">Splash fork optimised for M5 Max: ~1.5× faster (1.25× single request)</a>
+    <p class="summary">An optimized fork of Splash engine for M5 Max chips achieves 1.25-1.5× speed improvements with 4-bit models.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="tutorial">
+    <span class="cat">tutorial</span>
+    <a class="title" href="https://privatemode.ai/blog/system-one-from-glm-flash">Turn GLM-5.3-Flash into a Jev-like System One model</a>
+    <p class="summary">Guide on converting GLM-5.3-Flash to Jev-like System One model</p>
+    <div class="meta">
+      <span>hn_ai + lobsters_ai</span>
+      <span class="score">score 6/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wr5ylm/42x_faster_prompt_lookup_drafting_in_llamacpp">42x Faster Prompt Lookup Drafting in llama.cpp</a>
+    <p class="summary">llama.cpp introduces 42x faster prompt lookup drafting with optimization for local LLM inference.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="tooling">
+    <span class="cat">tooling</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wr1qlz/run_qwen38flashnext_and_tiny_models_on_apple">Run Qwen3.8+Flash-Next and tiny models on Apple Silicon up to 3x faster</a>
+    <p class="summary">ISHIZUKI library achieves 3x faster inference for Qwen3.8+Flash-Next and tiny models on Apple Silicon.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="tooling">
+    <span class="cat">tooling</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wr0p3n/i_added_qwenimage_21_lora_support_to_tensorsharp">I added Qwen-Image 2.1 + LoRA support to TensorSharp (GGUF, local inference)</a>
+    <p class="summary">TensorSharp, an open-source inference engine, added support for Qwen-Image 2.1 with LoRA adapters for local text-to-image generation and image editing.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="tooling">
+    <span class="cat">tooling</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wqw9rn/splash_110_released_gguf_quants_support_mlx">Splash 1.1.0 released, GGUF quants support, MLX import and more</a>
+    <p class="summary">Splash 1.1.0 adds GGUF quants support and MLX import for local LLM inference on Apple Silicon.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="tooling">
+    <span class="cat">tooling</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wqwm3o/85_gb_deepseekv4flash_at_3_toks_on_a_12_gb_rtx">85 GB DeepSeek-V4-Flash at ~3 tok/s on a 12 GB RTX 3060 + 64 GB DDR5 RAM - Overspill for FreeToken, inspired by Colibri</a>
+    <p class="summary">New tool Overspill enables running 85GB DeepSeek-V4-Flash model on 12GB GPU by using disk as memory tier, achieving 3 tok/s.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="tooling">
+    <span class="cat">tooling</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wqv9o8/getting_stupidly_good_results_on_my_4x3060ti_setup">Getting stupidly good results on my 4x3060ti setup.</a>
+    <p class="summary">User achieved 120 t/s inference on 4x3060ti GPUs using tensor parallelism with Qwen models.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="tooling">
+    <span class="cat">tooling</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wqs2t8/2400cc_inference_racer_dual_rtx_3090_motors">2400cc Inference Racer: Dual RTX 3090 motors, NVLink turbo, naked 7840U ThinkPad ECU, VW Golf radiator</a>
+    <p class="summary">Custom dual RTX 3090 server build with NVLink, cooled by VW radiator, running Qwen3.8-27B via vLLM.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="tooling">
+    <span class="cat">tooling</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wr0wki/improved_and_fixed_template_for_gptoss_again">Improved and fixed template for GPT-OSS (again). Includes preserve_thinking and fix for Unsloth-induced bug</a>
+    <p class="summary">Bug fix for GPT-OSS template addressing message rendering issue where model answers were dropped when reasoning was present.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 7/10</span>
+    </div>
+  </li>
+</ul>  </section>
+  <section class="day-section">
+    <div class="day-head">
+      <h2><a href="2026-09-26.html">Saturday 26 September 2026</a></h2>
+      <span class="count">10 items</span>
+    </div>
+<ul class="items">
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wqjr3f/qwen3827b_q4_k_m_on_2x3060">Qwen3.8-27B Q4_K_M on 2x3060</a>
+    <p class="summary">Qwen3.8-27B model running on 2x3060 GPUs with detailed performance metrics using llama.cpp.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="tooling">
+    <span class="cat">tooling</span>
+    <a class="title" href="https://allanrbo.blogspot.com/2026/09/a-jev-like-wrapper-for-llms-including.html">A single function Jev-like wrapper for LLMs, including vision models</a>
+    <p class="summary">A lightweight wrapper unifying API calls across various LLM providers and vision models.</p>
+    <div class="meta">
+      <span>hn_ai</span>
+      <span class="score">score 7/10</span>
+      <a href="https://news.ycombinator.com/item?id=49853175">discussion</a>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wqcrly/ling_tiny_30_is_a_glimpse_of_the_future">Ling Tiny 3.0 is a glimpse of the future</a>
+    <p class="summary">User successfully ran Ling 3.0 Tiny (8B MoE) on a 2017 laptop with only 8GB RAM, completing a network scanning task in 20 minutes.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wqahbz/mica_v01_4b_got_an_iron_pickaxe_in_real_minecraft">Mica v0.1 4B got an iron pickaxe in real Minecraft without generating a single token</a>
+    <p class="summary">Mica v0.1 4B AI achieved a complex Minecraft task using a non-textual decision-making process with ~90-150ms latency.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wqag1i/mica_v01_4b_open_jevstyle_decision_model_yesno">Mica v0.1 4B: open Jev-style decision model (yes/no, choice, score) that runs on an 8 GB GPU — trained for under $30 of GPU time</a>
+    <p class="summary">Mica v0.1 4B is an open-source decision model for agent loops that runs on 8GB GPU, trained for $30, outperforming similar models on decision tasks.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wq76f6/qwen3827b_using_kv_cache_transplants_to_boost">Qwen3.8-27B: Using KV Cache Transplants to Boost Output Quality</a>
+    <p class="summary">A developer experiments with transplanting KV caches between different quantizations of the Qwen3.8-27B model to improve output quality.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="tooling">
+    <span class="cat">tooling</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wqj4zg/ggmlcpu_tiled_mul_mat_for_kquants_by_jbooth_pull">ggml-cpu: tiled mul_mat for k-quants by jbooth · Pull Request #27851 · ggml-org/llama.cpp</a>
+    <p class="summary">Implementation of tiled mul_mat for k-quants in ggml shows 3-7x faster CPU prompt processing with VNNI.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 7/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="tooling">
+    <span class="cat">tooling</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wq672b/i_ran_the_actual_breakeven_math_on_buying_vs">I ran the actual break-even math on buying vs renting an H200 box, and it is not where I expected</a>
+    <p class="summary">Concrete analysis of break-even points for purchasing versus renting H200 GPU servers based on utilization rates.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wq56pf/swift15qwen38flashnext_is_phenomenal_vs_base">Swift1.5-Qwen3.8-Flash-Next is phenomenal vs. base 3.8-Flash!</a>
+    <p class="summary">Swift1.5-Qwen3.8-Flash-Next model reduces reasoning time by 60% while maintaining similar performance to base Qwen3.8-Flash in coding benchmarks.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="tooling">
+    <span class="cat">tooling</span>
+    <a class="title" href="https://tokio.rs/blog/2026-09-24-topcoat-server-applications">Topcoat is pushing the boundary of server applications with Rust</a>
+    <p class="summary">Topcoat is a new framework for building server applications in Rust that focuses on performance and developer productivity.</p>
+    <div class="meta">
+      <span>hn_ai</span>
+      <span class="score">score 5/10</span>
+      <a href="https://news.ycombinator.com/item?id=49842332">discussion</a>
+    </div>
+  </li>
+</ul>  </section>
+  <section class="day-section">
+    <div class="day-head">
+      <h2><a href="2026-09-25.html">Friday 25 September 2026</a></h2>
+      <span class="count">10 items</span>
+    </div>
+<ul class="items">
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://arxiv.org/abs/2608.17556">Reflex-Guard: A Low-Latency Guardrail for LLM Prompt Safety Using Dense Semantic Embeddings</a>
+    <p class="summary">Reflex-Guard is a lightweight, locally-run LLM safety guardrail using embeddings and binary classifiers that achieves 95.9% recall at 37.6ms latency.</p>
+    <div class="meta">
+      <span>arxiv_cs_cl + arxiv_cs_lg</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="research">
+    <span class="cat">research</span>
+    <a class="title" href="https://arxiv.org/abs/2609.29075">CRISS: A Retrieval-Augmented AI Chatbot for Assisting Cancer Registrars</a>
+    <p class="summary">CRISS demonstrates domain-specific RAG improves evidence grounding and response quality for cancer registry questions while enabling citation-supported assistance.</p>
+    <div class="meta">
+      <span>arxiv_cs_ai + arxiv_cs_cl</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="research">
+    <span class="cat">research</span>
+    <a class="title" href="https://arxiv.org/abs/2609.30137">Screen Before You Serve: Simulation for Production Customer Experience AI Agents at 140M Scale</a>
+    <p class="summary">Nubank used simulation to screen CX agents, improving tNPS by 36.69 points and self-service rate by 8.82 percentage points without customer exposure.</p>
+    <div class="meta">
+      <span>arxiv_cs_ai + arxiv_cs_cl</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="tooling">
+    <span class="cat">tooling</span>
+    <a class="title" href="https://huggingface.co/blog/LiquidAI/lfm2-5-vl-dspark">Accelerating vision-language models with LFM2.5-VL-DSpark</a>
+    <p class="summary">LFM2.5-VL-DSpark optimizes vision-language model inference using Spark-based distributed processing.</p>
+    <div class="meta">
+      <span>huggingface_blog</span>
+      <span class="score">score 7/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="tooling">
+    <span class="cat">tooling</span>
+    <a class="title" href="https://simonwillison.net/2026/Sep/24/datasette">datasette 1.0a41</a>
+    <p class="summary">Datasette 1.0a41 adds OpenTelemetry support and refactors modal dialogs to a reusable Web Component.</p>
+    <div class="meta">
+      <span>simon_willison</span>
+      <span class="score">score 6/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="research">
+    <span class="cat">research</span>
+    <a class="title" href="https://arxiv.org/abs/2609.29051">From Self-Distillation to Self-Practice: Privileged Information for Multi-Turn Agents</a>
+    <p class="summary">Paper critiques on-policy self-distillation for multi-turn agents and proposes Privileged Self-Practice, which improves task completion by up to 65%.</p>
+    <div class="meta">
+      <span>arxiv_cs_ai</span>
+      <span class="score">score 7/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="research">
+    <span class="cat">research</span>
+    <a class="title" href="https://arxiv.org/abs/2609.28771">Agent Memory with Episodic Retrieval for Financial Decision-Making</a>
+    <p class="summary">META is a RAG-like episodic-memory-augmented multi-agent framework for financial trading that improves directional accuracy by recalling relevant market experiences.</p>
+    <div class="meta">
+      <span>arxiv_cs_ai</span>
+      <span class="score">score 7/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="tooling">
+    <span class="cat">tooling</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wpjhkf/how_are_you_guys_thinking_about_context_now_and">How are you guys thinking about context now, and building around it?</a>
+    <p class="summary">Reddit discussion on local LLM context management using compact external memory and retrieval systems.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="tooling">
+    <span class="cat">tooling</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wpieby/i_added_openvino_support_to_laya_40_ms_per">I added OpenVINO support to Laya: 40 ms per question on CPU, 3.4x faster than PyTorch</a>
+    <p class="summary">OpenVINO integration to Laya achieves 40ms inference time on CPU, 3.4x faster than PyTorch implementation.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wpp28m/did_anyone_do_a_full_bench_of_eg_qwen_flash_next">Did anyone do a full bench of e.g. Qwen Flash Next IQ4 and Qwen 27b FP8? Here are some</a>
+    <p class="summary">Benchmark comparing Qwen 3.8 Flash Next IQ4_XS and Qwen 3.8 27B FP8 across multiple tasks, showing mixed results.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 7/10</span>
+    </div>
+  </li>
+</ul>  </section>
+  <section class="day-section">
+    <div class="day-head">
+      <h2><a href="2026-09-24.html">Thursday 24 September 2026</a></h2>
+      <span class="count">10 items</span>
+    </div>
+<ul class="items">
+  <li class="item" data-cat="research">
+    <span class="cat">research</span>
+    <a class="title" href="https://arxiv.org/abs/2609.28395">Fine-Tuning LLMs for Translation: General Forgetting Mitigation Does Not Preserve MT-Specific Instruction Following</a>
+    <p class="summary">Study finds general forgetting mitigation techniques don&#39;t preserve machine translation instruction following, with data mixing being the only method to maintain MT-specific controls.</p>
+    <div class="meta">
+      <span>arxiv_cs_cl + arxiv_cs_lg</span>
+      <span class="score">score 7/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="research">
+    <span class="cat">research</span>
+    <a class="title" href="https://arxiv.org/abs/2609.27470">DeltaS: Reading the Gated Linear Attention State for KV Cache Eviction in Streaming Video</a>
+    <p class="summary">DeltaS uses state drift from gated linear attention to efficiently evict KV cache in streaming video models, outperforming existing methods with minimal computational cost.</p>
+    <div class="meta">
+      <span>arxiv_cs_cl + arxiv_cs_lg</span>
+      <span class="score">score 7/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="research">
+    <span class="cat">research</span>
+    <a class="title" href="https://arxiv.org/abs/2609.27408">What Looks Like a Capability Limit in Vision-Language Models Is a Readout Limit</a>
+    <p class="summary">Study reveals that benchmark limits in vision-language models may result from readout conventions rather than model capabilities.</p>
+    <div class="meta">
+      <span>arxiv_cs_cl</span>
+      <span class="score">score 7/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="research">
+    <span class="cat">research</span>
+    <a class="title" href="https://arxiv.org/abs/2609.27233">Distilling Sequential Computation in Transformer Language Models</a>
+    <p class="summary">Researchers introduce a method to compress sequential computation in Transformer models by replacing token spans with surrogate embeddings, reducing sequence length by up to 40% with minimal accuracy loss.</p>
+    <div class="meta">
+      <span>arxiv_cs_cl</span>
+      <span class="score">score 7/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="tooling">
+    <span class="cat">tooling</span>
+    <a class="title" href="https://huggingface.co/blog/nvidia/how-to-use-nvidia-warp-and-mjwarp">How to Use NVIDIA Warp and MjWarp to Accelerate Robotics Simulation and Learning Workflows</a>
+    <p class="summary">NVIDIA Warp and MjWarp provide GPU acceleration for robotics simulation and learning workflows using PyTorch and JAX.</p>
+    <div class="meta">
+      <span>huggingface_blog</span>
+      <span class="score">score 6/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="research">
+    <span class="cat">research</span>
+    <a class="title" href="https://arxiv.org/abs/2606.03946">MLSkip: Data Skipping for ML Filters via Lightweight Metadata</a>
+    <p class="summary">MLSkip introduces data skipping techniques for ML-based filters using metadata pruning, achieving 38.3% effectiveness with minimal overhead.</p>
+    <div class="meta">
+      <span>arxiv_cs_lg</span>
+      <span class="score">score 7/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wom3fe/qwen_38_flash_next_q4_k_m_130k_context_q8_cache">Qwen 3.8 Flash Next q4_k_m, 130k context, q8 cache on 16GB VRAM ann 64GB RAM, 15-20 t/s on 4080</a>
+    <p class="summary">Qwen 3.8 Flash optimized for 16GB VRAM with quantization and caching techniques achieving 15-20 tokens/sec.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 9/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wouby6/jev_almost_dead_clm_vs_jev">JEV almost dead: CLM vs JEV</a>
+    <p class="summary">CLM introduces an open-source alternative to Jev with comparable functionality but improved latency through disaggregated caching and fine-tuning capabilities.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 8/10</span>
+    </div>
+  </li>
+  <li class="item" data-cat="model_release">
+    <span class="cat">model release</span>
+    <a class="title" href="https://artificialanalysis.ai/models/mercury-2-5">Mercury 2.5 LLM hits 770 tokens per second</a>
+    <p class="summary">Mercury 2.5 LLM achieves 770 tokens per second inference speed, highlighting performance optimizations for production deployment.</p>
+    <div class="meta">
+      <span>hn_ai</span>
+      <span class="score">score 7/10</span>
+      <a href="https://news.ycombinator.com/item?id=49823348">discussion</a>
+    </div>
+  </li>
+  <li class="item" data-cat="tooling">
+    <span class="cat">tooling</span>
+    <a class="title" href="https://reddit.com/r/LocalLLaMA/comments/1wou3gr/my_foray_into_local_ai_two_bc250_ex_mining_apus">My foray into local ai. Two BC-250 ex mining apus running Qwen3.6-35B-A3B Q4_K_M at 60 tok/s with 64k context</a>
+    <p class="summary">User successfully runs Qwen3.6-35B model locally on two BC-250 GPUs for approximately $300 total.</p>
+    <div class="meta">
+      <span>reddit_localllama</span>
+      <span class="score">score 7/10</span>
+    </div>
+  </li>
+</ul>  </section>
+
+  <section class="archive">
+    <h2>Earlier</h2>
+    <ul>
+      <li>
+        <a href="2026-09-23.html">
+          <span class="date">Wednesday 23 September 2026</span>
+          <span class="peek">model release · research · tooling</span>
+          <span class="n">10</span>
+        </a>
+      </li>
+      <li>
+        <a href="2026-09-22.html">
+          <span class="date">Tuesday 22 September 2026</span>
+          <span class="peek">research · model release · tooling</span>
+          <span class="n">10</span>
+        </a>
+      </li>
+      <li>
+        <a href="2026-09-21.html">
+          <span class="date">Monday 21 September 2026</span>
+          <span class="peek">research · model release · tooling</span>
+          <span class="n">10</span>
+        </a>
+      </li>
+      <li>
+        <a href="2026-09-20.html">
+          <span class="date">Sunday 20 September 2026</span>
+          <span class="peek">tooling · model release</span>
+          <span class="n">10</span>
+        </a>
+      </li>
+      <li>
+        <a href="2026-09-19.html">
+          <span class="date">Saturday 19 September 2026</span>
+          <span class="peek">model release · tooling · research</span>
+          <span class="n">10</span>
+        </a>
+      </li>
+      <li>
+        <a href="2026-09-18.html">
+          <span class="date">Friday 18 September 2026</span>
+          <span class="peek">tooling · research · model release</span>
+          <span class="n">10</span>
+        </a>
+      </li>
+      <li>
+        <a href="2026-09-17.html">
+          <span class="date">Thursday 17 September 2026</span>
+          <span class="peek">research · model release · tooling</span>
+          <span class="n">10</span>
+        </a>
+      </li>
+      <li>
+        <a href="2026-09-16.html">
+          <span class="date">Wednesday 16 September 2026</span>
+          <span class="peek">research · model release · tooling</span>
+          <span class="n">10</span>
+        </a>
+      </li>
+      <li>
+        <a href="2026-09-15.html">
+          <span class="date">Tuesday 15 September 2026</span>
+          <span class="peek">research · model release · tooling</span>
+          <span class="n">10</span>
+        </a>
+      </li>
+      <li>
+        <a href="2026-09-14.html">
+          <span class="date">Monday 14 September 2026</span>
+          <span class="peek">research · model release · tooling</span>
+          <span class="n">10</span>
+        </a>
+      </li>
+      <li>
+        <a href="2026-09-13.html">
+          <span class="date">Sunday 13 September 2026</span>
+          <span class="peek">tooling · research · model release</span>
+          <span class="n">10</span>
+        </a>
+      </li>
+      <li>
+        <a href="2026-09-12.html">
+          <span class="date">Saturday 12 September 2026</span>
+          <span class="peek">tooling · research · model release</span>
+          <span class="n">10</span>
+        </a>
+      </li>
+      <li>
+        <a href="2026-09-11.html">
+          <span class="date">Friday 11 September 2026</span>
+          <span class="peek">research · tooling · model release</span>
+          <span class="n">10</span>
+        </a>
+      </li>
+      <li>
+        <a href="2026-09-09.html">
+          <span class="date">Wednesday 9 September 2026</span>
+          <span class="peek">research · model release · tooling</span>
+          <span class="n">10</span>
+        </a>
+      </li>
+      <li>
+        <a href="2026-09-08.html">
+          <span class="date">Tuesday 8 September 2026</span>
+          <span class="peek">model release · tooling · research</span>
+          <span class="n">10</span>
+        </a>
+      </li>
+      <li>
+        <a href="2026-09-07.html">
+          <span class="date">Monday 7 September 2026</span>
+          <span class="peek">model release · research · tooling · tutorial</span>
+          <span class="n">10</span>
+        </a>
+      </li>
+      <li>
+        <a href="2026-09-06.html">
+          <span class="date">Sunday 6 September 2026</span>
+          <span class="peek">research · tooling · model release · tutorial</span>
+          <span class="n">10</span>
+        </a>
+      </li>
+      <li>
+        <a href="2026-09-05.html">
+          <span class="date">Saturday 5 September 2026</span>
+          <span class="peek">industry · model release · research · tooling</span>
+          <span class="n">10</span>
+        </a>
+      </li>
+      <li>
+        <a href="2026-09-04.html">
+          <span class="date">Friday 4 September 2026</span>
+          <span class="peek">research · model release</span>
+          <span class="n">10</span>
+        </a>
+      </li>
+      <li>
+        <a href="2026-09-03.html">
+          <span class="date">Thursday 3 September 2026</span>
+          <span class="peek">research · model release · tooling</span>
+          <span class="n">10</span>
+        </a>
+      </li>
+      <li>
+        <a href="2026-09-01.html">
+          <span class="date">Tuesday 1 September 2026</span>
+          <span class="peek">tooling · research · model release</span>
+          <span class="n">10</span>
+        </a>
+      </li>
+      <li>
+        <a href="2026-08-31.html">
+          <span class="date">Monday 31 August 2026</span>
+          <span class="peek">research · model release · tooling · tutorial</span>
+          <span class="n">38</span>
+        </a>
+      </li>
+    </ul>
+  </section>
+
+  <footer>
+    <span>348 items across 32 digests. Rebuilt 03 Oct 2026, 10:09 UTC.</span>
+    <span>Python, dlt, dbt, DuckDB locally and BigQuery in production, GLM&nbsp;4.5&nbsp;Flash for triage, GitHub Actions for scheduling. No server.</span>
+    <span><a href="https://github.com/amruth1181/ai-radar">github.com/amruth1181/ai-radar</a></span>
+  </footer>
+</div>
+</body>
+</html>
